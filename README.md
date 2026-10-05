@@ -40,7 +40,7 @@ Windows 也可以下载源码 ZIP、解压后双击 `docker-setup.cmd`。
 2. 双击 `start.cmd`，打开终端显示的面板地址，默认 <http://localhost:7081>。
 3. 点击面板的「打开游戏 / 登录」，会启动本项目独立的浏览器窗口。请切换到该窗口手动登录 Discord；打开窗口不会等待游戏启动器。登录后回到面板点击「读取人物」，如出现首次授权或存档选择，先在浏览器中手动完成，再重新读取。后续人物绑定、地图选择与 Docker 相同。
 
-也可以运行 `npm ci`、`npm start`。原生模式直接在浏览器窗口中登录，不提供 noVNC 链接。按 Ctrl+C 结束脚本；关闭脚本浏览器也会结束进程。电脑需要保持运行。
+也可以运行 `npm ci`、`npm start`。原生模式直接在浏览器窗口中登录，不提供 noVNC 链接。关闭独立浏览器窗口会停止自动操作并保留控制面板；可从面板重新打开游戏，登录资料和已有记录继续保留。按启动终端的 Ctrl+C 才结束脚本。电脑需要保持运行。
 
 需要 Edge 时，复制 `config.example.json` 为 `config.json`，把 `browserChannel` 改为 `msedge`；使用 Playwright Chromium 时，先运行 `npx playwright install chromium`，再设置为 `chromium`。
 

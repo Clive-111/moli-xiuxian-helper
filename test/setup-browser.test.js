@@ -77,6 +77,11 @@ test('setup panel releases buttons and reports login instructions even when SSE 
   assert.equal(await page.locator('#setup-open').isDisabled(),false);
   assert.equal(await page.locator('#setup-bind').isDisabled(),true);
   assert.equal(c.isBound,false);assert.equal(c.record.desired,'stopped');assert.deepEqual(errors,[]);
+  await c.handleBrowserClosed();
+  await page.waitForFunction(()=>document.querySelector('#setup-message').textContent.includes('面板仍在运行'));
+  assert.equal(await page.locator('#setup-open').isDisabled(),false);
+  assert.equal(await page.locator('#setup-detect').isDisabled(),true);
+  assert.match(await page.locator('#notice').textContent(),/重新打开/u);
  }finally{releaseOpen?.();releaseReceipt?.();c.close();await page.close();await server.close();}
 });
 test('bootstrap identity detects arbitrary visible full names and rejects hidden, duplicate and blocked identity',async()=>{

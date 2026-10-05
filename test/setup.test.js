@@ -42,6 +42,47 @@ test('open login releases setup queue without reading identity or waiting for th
   assert.equal(h.reads,1);assert.match(h.control.reason,/核对完整姓名/u);
  }finally{h.control.close();}
 });
+test('closing an unbound browser invalidates the candidate, leaves data empty and permits explicit reopen',async()=>{
+ const h=await harness();try{
+  await h.control.command('setup-detect').promise;
+  await h.control.handleBrowserClosed();
+  assert.equal(h.control.getSetup().candidate,null);assert.equal(h.control.getSetup().browserClosed,true);
+  assert.equal(h.control.snapshot().desired,'stopped');assert.match(h.control.reason,/面板仍在运行/u);
+  assert.deepEqual(await readdir(h.directory),[]);
+  assert.throws(()=>h.control.command('setup-detect'),/请先点击/u);
+  assert.equal((await h.control.command('setup-open-game').promise).ok,true);
+  assert.equal(h.control.getSetup().browserClosed,false);assert.equal(h.opens,1);
+  assert.equal((await h.control.command('setup-detect').promise).ok,true);
+ }finally{h.control.close();}
+});
+test('window close invalidates an in-flight read and cancels older queued opens without relaunching',async()=>{
+ const h=await harness();let release,entered;
+ const ready=new Promise(resolve=>{entered=resolve;});
+ h.ui.detectCharacter=async()=>{entered();await new Promise(resolve=>{release=resolve;});return '旧窗口人物';};
+ try{
+  const read=h.control.command('setup-detect');await ready;
+  const queuedOpen=h.control.command('setup-open-game');
+  const closed=h.control.handleBrowserClosed();release();
+  assert.equal((await read.promise).ok,false);assert.equal((await queuedOpen.promise).ok,false);await closed;
+  assert.equal(h.opens,0);assert.equal(h.control.getSetup().candidate,null);
+  assert.equal(h.control.snapshot().busy,null);assert.deepEqual(await readdir(h.directory),[]);
+ }finally{release?.();h.control.close();}
+});
+test('bound browser close preserves pending evidence and persists stopped, closed intent across restart',async()=>{
+ const h=await harness();try{
+  await bind(h);h.control.record.desired='running';
+  const pending={at:Date.now(),stageName:'待核实地点'};h.control.runner={pendingEntry:pending};
+  const closed=h.control.handleBrowserClosed();
+  assert.ok(h.control.stopRequests>0);assert.ok(h.control.closeRequests>0);
+  assert.equal((await closed).ok,true);
+  assert.equal(h.control.record.desired,'stopped');assert.equal(h.control.record.gameClosed,true);
+  assert.equal(h.control.runner.pendingEntry,pending);
+  const restored=new SetupControl(h.params);try{
+   await restored.initialize();assert.equal(restored.phase,'closed');assert.equal(restored.record.desired,'stopped');
+   assert.equal(h.opens,0);assert.equal(restored.record.gameClosed,true);
+  }finally{restored.close();}
+ }finally{h.control.close();}
+});
 test('read then confirm rechecks full name; binding remains stopped, with no preset target or consumables',async()=>{
  const h=await harness();try{
   await bind(h);assert.equal(h.reads,2);assert.equal(h.control.isBound,true);

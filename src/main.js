@@ -7,6 +7,7 @@ import { bypassHttpCache, closeBattlePages } from './browser.js';
 import { BattleUI } from './battle-ui.js';
 import { SetupControl } from './setup-control.js';
 import { startControlServer } from './control-server.js';
+import { BrowserSession } from './browser-session.js';
 
 try { process.loadEnvFile(path.join(root,'.env')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
 const args = process.argv.slice(2);
@@ -16,7 +17,7 @@ if (args.includes('--help')) {
 }
 if (args.length && (args.length !== 2 || args[0] !== '--config' || !args[1] || args[1].startsWith('--'))) throw new Error('参数无效，请使用 --help。');
 const abort = new AbortController();
-let context, logger, control, server;
+let browserSession, logger, control, server;
 const releases = [];
 let closing = false;
 const stop = () => { closing = true; abort.abort(); };
@@ -28,25 +29,22 @@ try {
   logger = await createLogger();
   const {log} = logger;
   log('配置：'+configPath+'；未提供个人配置时使用公开默认值。');
-  async function browserContext() {
-    if (context) return context;
+  browserSession = new BrowserSession(async () => {
     await mkdir(config.profilePath,{recursive:true});
-    context = await chromium.launchPersistentContext(config.profilePath,{
+    return chromium.launchPersistentContext(config.profilePath,{
       channel:config.browserChannel === 'chromium' ? undefined : config.browserChannel,
       headless:false,viewport:{width:1280,height:900},locale:'zh-CN',
       handleSIGINT:false,handleSIGTERM:false,handleSIGHUP:false,
       ...(config.browserProxyServer ? {proxy:{server:config.browserProxyServer}} : {}),
     });
-    context.on('close',() => { if (!closing) { log('浏览器已关闭，停止脚本。'); stop(); } });
-    return context;
-  }
+  },() => closing ? undefined : control.handleBrowserClosed(),error => log('浏览器关闭状态处理失败：'+error.message));
   control = new SetupControl({
     base:config.battle,runtime:config,directory:config.dataPath,signal:abort.signal,log,
     diagnostics:(ui,reason) => ui?.diagnostics(path.join(logger.directory,'battle'),reason),
-    closeGamePage:async ui => { if (context) await closeBattlePages(context,{page:ui?.page,channelUrl:config.battle.channelUrl}); },
+    closeGamePage:async ui => { if (browserSession.context) await closeBattlePages(browserSession.context,{page:ui?.page,channelUrl:config.battle.channelUrl}); },
     makeUI:async (battle,taskLog,previous,reconnect) => {
       if (previous && !reconnect && !previous.page.isClosed() && !previous.crashed) return previous;
-      const browser = await browserContext();
+      const browser = await browserSession.get();
       let page = previous?.page;
       if (!page || page.isClosed() || previous.crashed) {
         await page?.close().catch(()=>{});
@@ -69,10 +67,8 @@ try {
   process.exitCode = 1;
 } finally {
   closing = true; abort.abort(); control?.close();
-  await context?.close().catch(()=>{});
+  await browserSession?.close().catch(()=>{});
   await control?.tail;
-  // A pending first launch may have finished after the first close attempt.
-  await context?.close().catch(()=>{});
   await server?.close();
   await control?.images.close();
   for (const release of releases.reverse()) await release();

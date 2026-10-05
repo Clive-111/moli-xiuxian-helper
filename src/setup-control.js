@@ -21,15 +21,34 @@ export class SetupControl extends BattleControl {
     this.dataRoot = options.directory;
     this.record = {version:1,revision:0,desired:'stopped',settings:initialSettings(options.base)};
     this.phase = 'setup';
+    this.browserEpoch = 0;
   }
   get isBound() { return Boolean(this.binding && this.initialized); }
   getSetup() {
     return {bound:this.isBound,characterName:this.binding?.characterName ?? null,
       candidate:this.candidate ? {characterName:this.candidate.characterName,token:this.candidate.token} : null,
       channelUrl:this.base.channelUrl,appName:this.base.appName,
+      browserClosed:this.browserClosed === true,
       browserViewPort:this.runtime.browserViewPort ?? null};
   }
   snapshot() { return {...super.snapshot(),setup:this.getSetup()}; }
+  handleBrowserClosed() {
+    this.browserEpoch++;
+    this.browserClosed = true;
+    this.candidate = null;
+    this.log('独立浏览器已关闭；控制面板保持运行，等待手动重新打开游戏。');
+    // Bound characters use the existing stop fences and durable close record,
+    // preserving uncertain transactions and cancelling queued game operations.
+    if (this.binding) return super.command('close-game').promise;
+    return this.serial(async () => {
+      // A confirmation may have finished saving while the window was closing.
+      if (this.binding) return this.disconnectGame();
+      this.ui = null;
+      this.phase = 'setup';
+      this.reason = '游戏窗口已关闭，控制面板仍在运行。点击「打开游戏 / 登录」即可重新打开。';
+      this.publish();
+    });
+  }
   async initialize() {
     this.binding = await readJson(path.join(this.dataRoot,'identity.json'));
     if (!this.binding) {
@@ -71,9 +90,10 @@ export class SetupControl extends BattleControl {
     }
     if (!['setup-open-game','setup-detect','setup-bind'].includes(kind)) throw new Error('未知设置操作。');
     if (this.binding) throw new Error('当前目录已经绑定人物；换号请使用独立运行目录。');
+    if (this.browserClosed && kind !== 'setup-open-game') throw new Error('游戏窗口已关闭，请先点击「打开游戏 / 登录」。');
     if (this.pending.has(kind)) return this.pending.get(kind);
     if (this.pending.size >= 3) throw new Error('设置操作正在排队。');
-    const job = {id:++this.sequence,kind,payload};
+    const job = {id:++this.sequence,kind,payload,browserEpoch:this.browserEpoch};
     this.pending.set(kind,job);
     job.promise = this.serial(async () => {
       this.activeCommand = kind;
@@ -83,13 +103,19 @@ export class SetupControl extends BattleControl {
         this.signal.throwIfAborted();
         // Recheck inside the queue: a previous confirmation may have bound it.
         if (this.binding) throw new Error('人物已绑定，请刷新页面。');
+        const checkBrowser = () => { if (job.browserEpoch !== this.browserEpoch) throw new Error('游戏窗口已关闭，请重新打开后读取人物。'); };
+        checkBrowser();
+        if (kind === 'setup-open-game') this.browserClosed = false;
         this.ui = await this.makeUI(this.base,this.log,this.ui,false);
+        checkBrowser();
         if (kind === 'setup-open-game') {
           await this.ui.openForLogin();
+          checkBrowser();
           this.reason = '浏览器已打开。请在浏览器中手动登录 Discord；完成后回到面板点击「读取人物」。首次授权或存档选择也需手动完成。';
         }
         else {
           const name = await this.ui.detectCharacter();
+          checkBrowser();
           if (kind === 'setup-detect') {
             this.candidate = {characterName:name,token:randomUUID(),at:this.now()};
             this.reason = '已读取人物「'+name+'」，请核对完整姓名后确认绑定。';

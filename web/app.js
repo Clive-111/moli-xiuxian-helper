@@ -69,8 +69,10 @@ function render(value) {
     text('setup-character',setup?.candidate?.characterName ?? '尚未读取人物');
     text('setup-message',value.reason || '请先打开游戏，手动登录并显示角色头像页。');
     $('setup-bind').disabled = !setup?.candidate || Boolean(value.busy);
-    $('setup-open').disabled = $('setup-detect').disabled = Boolean(value.busy);
+    $('setup-open').disabled = Boolean(value.busy);
+    $('setup-detect').disabled = Boolean(value.busy) || Boolean(setup?.browserClosed);
     if (value.busy?.startsWith('setup-')) notice(value.reason || '正在处理首次设置…',true);
+    else if (setup?.browserClosed) notice(value.reason);
     else if (value.lastCommand?.kind?.startsWith('setup-') && lastCommand !== value.lastCommand.id) {
       lastCommand = value.lastCommand.id;
       notice(value.lastCommand.ok ? value.lastCommand.message || '操作完成，请继续下一步。' : value.lastCommand.error,value.lastCommand.ok);
