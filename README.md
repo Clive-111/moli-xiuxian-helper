@@ -12,9 +12,35 @@
 
 仅支持这款游戏及其当前中文界面，不包含墨铃的两小时游历任务。地图、商店和物品来自游戏公开资源，并用当前人物的页面核实可用性；目录不代表该人物已解锁。
 
+## 安装前：选择一种运行方式
+
+在 Windows 上直接运行，可选「Windows 原生」；需要容器部署时选「Docker」。两种方式任选一种，每个游戏账号同时只运行一个实例。
+
+| 准备项 | Windows 原生 | Docker |
+| --- | --- | --- |
+| Node.js | 本机安装，最低 22，推荐 **24 LTS** | 容器内提供，本机无需为本项目安装 |
+| npm | 随 Node.js 标准安装包安装 | 容器内提供 |
+| 游戏操作浏览器 | 默认使用本机 Chrome，也可配置 Edge 或 Chromium | 容器内提供 Chromium，通过 7080 浏览器画面登录 |
+| 项目依赖 | 双击 `install.cmd` 自动安装 | 构建镜像时自动安装 |
+| Docker | 无需安装 | Windows 安装并启动 Docker Desktop；Linux 使用 Docker Engine 和 Compose v2 |
+| Git | 可选；下载源码 ZIP 不需要 Git | 可选；下载源码 ZIP 不需要 Git |
+
+**项目依赖是什么？** [package.json](package.json) 列出本项目使用的 JavaScript 库：Playwright 负责操作游戏浏览器，Acorn 负责解析公开游戏资源中的地图和物品定义。`install.cmd` 会执行 `npm ci`，按 [package-lock.json](package-lock.json) 锁定的版本安装到项目的 `node_modules/`，无需分别手动安装这些库。`install.cmd` 不会代替你安装 Node.js 或 Chrome；使用默认 Chrome 模式时，也不需要额外下载 Playwright 的 Chromium。
+
+安装依赖和构建镜像需要联网；使用时需能访问 Discord 和游戏。Node.js 的 Windows 安装程序及 LTS 说明见 [Node.js 下载页](https://nodejs.org/en/download)和 [npm 安装说明](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm/)。
+
 ## 快速开始：Docker
 
-需要 Docker Engine 和 Compose v2；Windows 可用 Docker Desktop 的 Linux 容器模式。
+Windows 首次安装：
+
+1. 按 [Docker Desktop 官方 Windows 安装说明](https://docs.docker.com/desktop/setup/install/windows-install/)安装，按安装器和官方系统要求完成 WSL 2、虚拟化等准备。
+2. 启动 Docker Desktop，等待引擎启动完成，使用 **Linux 容器**模式。在终端执行 `docker version` 应能看到客户端和服务端信息，`docker compose version` 应能返回 Compose v2 版本。
+3. 从 [GitHub 仓库](https://github.com/Clive-111/moli-xiuxian-helper)点击 **Code → Download ZIP**，完整解压到可写目录，例如 `D:\moli-xiuxian-helper`。进入包含 `compose.yaml` 的项目根目录，双击 `docker-setup.cmd`。
+4. 等待镜像构建和服务启动完成。首次需要下载镜像、系统组件和项目依赖，耗时取决于网络；失败时查看窗口中的具体错误。
+
+容器已经包含 Node.js、npm、Chromium 和需要的系统组件，本机不必再运行 `install.cmd`。Linux 用户准备好 Docker Engine 和 Compose v2 后，在源码根目录执行 `docker compose up -d --build`。
+
+如果已安装 Git，也可以在终端使用以下方式下载并启动：
 
 ```sh
 git clone https://github.com/Clive-111/moli-xiuxian-helper.git
@@ -22,7 +48,14 @@ cd moli-xiuxian-helper
 docker compose up -d --build
 ```
 
-Windows 也可以下载源码 ZIP、解压后双击 `docker-setup.cmd`。
+默认入口分工如下；修改端口后以自己的配置为准：
+
+| 地址 | 用途 |
+| --- | --- |
+| <http://localhost:7081> | 控制面板：绑定人物、选择地点、管理挂机与物品 |
+| <http://localhost:7080/vnc.html> | 容器里的浏览器画面：手动登录 Discord、处理授权和游戏提示 |
+
+启动后首次设置：
 
 1. 打开控制面板：<http://localhost:7081>。
 2. 点击「1. 打开游戏 / 登录」。从面板左侧进入浏览器画面，默认 <http://localhost:7080/vnc.html>，手动登录 Discord、完成 App 授权并进入已创建的人物。
@@ -42,15 +75,93 @@ Windows 也可以下载源码 ZIP、解压后双击 `docker-setup.cmd`。
 
 ## 快速开始：Windows 原生
 
-安装 Node.js 22 或更新版本，以及 Chrome。将源码放在可写目录，例如 D 盘项目目录。
+### 1. 下载并解压源码
 
-1. 双击 `install.cmd` 安装依赖。
-2. 双击 `start.cmd`，打开终端显示的面板地址，默认 <http://localhost:7081>。
-3. 点击面板的「打开游戏 / 登录」，会启动本项目独立的浏览器窗口。请切换到该窗口手动登录 Discord；打开窗口不会等待游戏启动器。登录后回到面板点击「读取人物」，如出现首次授权或存档选择，先在浏览器中手动完成，再重新读取。后续人物绑定、地图选择与 Docker 相同。
+打开 [GitHub 仓库](https://github.com/Clive-111/moli-xiuxian-helper)，点击 **Code → Download ZIP**。完整解压到可写目录，推荐 `D:\moli-xiuxian-helper`；下面命令均使用这个示例路径，请按实际路径调整。进入能看到 `package.json`、`install.cmd` 和 `start.cmd` 的目录，不要直接在 ZIP 压缩包内运行脚本。
 
-也可以运行 `npm ci`、`npm start`。原生模式直接在浏览器窗口中登录，不提供 noVNC 链接。关闭独立浏览器窗口会停止自动操作并保留控制面板；可从面板重新打开游戏，登录资料和已有记录继续保留。按启动终端的 Ctrl+C 才结束脚本。电脑需要保持运行。
+### 2. 安装 Node.js 与浏览器
 
-需要 Edge 时，复制 `config.example.json` 为 `config.json`，把 `browserChannel` 改为 `msedge`；使用 Playwright Chromium 时，先运行 `npx playwright install chromium`，再设置为 `chromium`。
+从 [Node.js 官网](https://nodejs.org/en/download)下载 Windows 安装包，推荐 **Node.js 24 LTS**，本项目最低要求为 22。按默认选项安装，保留 npm 和加入 PATH 的选项；npm 是安装项目依赖用的工具，标准安装包已包含它。
+
+安装完成后，重新打开「命令提示符（CMD）」，分别执行：
+
+```bat
+node -v
+npm -v
+```
+
+两条命令都应显示版本号；Node.js 24 的输出以 `v24.` 开头。若提示找不到命令，先关闭并重新打开终端；仍失败时检查 Node.js 安装和 PATH，具体见下方常见问题。
+
+默认还需要安装 [Google Chrome](https://www.google.com/chrome/)。脚本会使用独立浏览器资料目录，登录需在它打开的窗口里完成。已有 Edge 的用户可使用本节末尾的替代配置。
+
+### 3. 安装项目依赖并启动
+
+1. 在项目目录双击 `install.cmd`。它会检查 Node.js 是否可用、执行 `npm ci` 安装依赖，并将 npm 缓存和安装临时文件放在项目的 `work/` 下。看到 `Installed` 表示安装成功；失败时先处理窗口里的错误。
+2. 双击 `start.cmd`。看到控制面板地址后，打开 <http://localhost:7081>；端口改过时使用终端实际打印的地址。
+3. 点击「打开游戏 / 登录」，切换到脚本打开的独立浏览器，手动登录 Discord 并完成授权。回到面板读取人物、确认绑定，等待资料同步，再选择战斗及调息地点，保存并启动挂机。存档选择或验证码需手动处理。
+
+第一次使用需要安装依赖；以后一般直接运行 `start.cmd`。更新源码、依赖文件变化后，先停止自己的实例，再重新运行 `install.cmd`。
+
+熟悉命令行的用户，也可以在 **CMD** 中执行以下等价安装、启动命令（请替换成自己的项目路径）：
+
+```bat
+cd /d "D:\moli-xiuxian-helper"
+set "npm_config_cache=%CD%\work\npm-cache"
+set "TEMP=%CD%\work\tmp"
+set "TMP=%TEMP%"
+if not exist "%TEMP%" mkdir "%TEMP%"
+npm ci
+npm start
+```
+
+请确认 `npm ci` 成功后再执行 `npm start`。使用 PowerShell 时可直接运行 `.\install.cmd`、`.\start.cmd`；手动调用 npm 可用 `npm.cmd ci`、`npm.cmd start`，避免 `npm.ps1` 被执行策略阻止。
+
+原生模式直接在独立浏览器窗口中登录，不提供 7080/noVNC 入口。运行期间保留启动终端，电脑保持运行。关闭独立浏览器窗口会停止自动操作并保留控制面板，可从面板重新打开游戏；登录资料和已有记录继续保留。按启动终端的 Ctrl+C 结束脚本。
+
+### 可选：使用 Edge 或 Chromium
+
+没有 `config.json` 时，先复制 `config.example.json` 为 `config.json`；已有该文件则直接编辑，保留自己的配置。仅修改其中的 `browserChannel`，例如使用 Edge 时设为 `"browserChannel": "msedge"`。已经运行时，配置在下次启动自己的实例后生效。
+
+| 浏览器 | `browserChannel` 值 | 准备方式 |
+| --- | --- | --- |
+| Google Chrome（默认） | `chrome` | 本机安装 Chrome |
+| Microsoft Edge | `msedge` | 本机已安装 Edge |
+| Playwright Chromium | `chromium` | 安装项目依赖后下载匹配的 Chromium，见下方命令 |
+
+选择 Chromium 时，在 **CMD** 的项目根目录运行下面命令，将浏览器下载到 D 盘项目目录。这里的 `npx` 同样随 npm 提供：
+
+```bat
+cd /d "D:\moli-xiuxian-helper"
+set "npm_config_cache=%CD%\work\npm-cache"
+set "TEMP=%CD%\work\tmp"
+set "TMP=%TEMP%"
+if not exist "%TEMP%" mkdir "%TEMP%"
+set "PLAYWRIGHT_BROWSERS_PATH=D:/moli-xiuxian-helper/work/pw-browsers"
+npx playwright install chromium
+```
+
+同时在项目根目录的 `.env` 中加入下面一行，让以后的启动也使用同一个浏览器目录；没有 `.env` 时可先复制 `.env.example`。如果使用了其他解压路径，安装命令和 `.env` 中的路径都要对应修改：
+
+```dotenv
+PLAYWRIGHT_BROWSERS_PATH=D:/moli-xiuxian-helper/work/pw-browsers
+```
+
+更新项目依赖后，如果使用 Chromium，需要重新运行下载命令以匹配 Playwright 版本。浏览器安装和缓存位置详见 [Playwright 官方浏览器说明](https://playwright.dev/docs/browsers)。
+
+## 安装与启动常见问题
+
+| 现象 | 处理方式 |
+| --- | --- |
+| `node` 或 `npm` 不是内部或外部命令 | 安装推荐的 Node.js LTS，保留 npm/PATH 选项，再重新打开终端检查版本；可用 `where node`、`where npm` 查看命令位置。 |
+| Node.js 版本低于 22 | 升级到推荐的 24 LTS 后重新打开终端，再运行 `install.cmd`；脚本只检查命令存在，版本需自行核对。 |
+| PowerShell 提示不能运行 `npm.ps1` | 双击 `install.cmd`、`start.cmd`，或使用 `npm.cmd` 命令；不需要为本项目放宽全局执行策略。 |
+| 提示先运行 `install.cmd`，或找不到 Playwright 等模块 | 在包含 `package.json` 和 `package-lock.json` 的完整源码目录重新运行 `install.cmd`，安装成功后再启动。 |
+| `npm ci` 下载超时、网络或证书错误 | 查看安装窗口的首个错误，检查 npm 包下载网络及自己使用的代理；恢复后重试 `install.cmd`。游戏的 `BROWSER_PROXY_SERVER` 仅控制游戏网络，不代替 npm 的网络配置。 |
+| 提示 Chrome 可执行文件不存在 | 安装 Chrome，或按上面的说明将 `browserChannel` 改为已安装的 Edge；选择 Chromium 时需完成下载并配置同一浏览器目录。 |
+| Docker 命令找不到或无法连接 Docker 服务 | 安装并启动 Docker Desktop，等待引擎就绪、确认使用 Linux 容器，再检查 `docker version`、`docker compose version`。 |
+| Docker 镜像构建失败 | 查看构建窗口中的错误，检查镜像仓库和软件包下载网络；引擎、网络恢复后重新运行 `docker-setup.cmd`。 |
+| 面板端口被占用 / `EADDRINUSE` | 在 `.env` 中为自己的实例设置其他 `CONTROL_PORT`，例如 `17081`，重新启动后打开终端打印的新地址；Docker 的浏览器画面端口也可用 `VNC_PORT` 调整。 |
+| 浏览器提示 localhost 拒绝连接 | 先确认启动终端仍在运行，或 Docker 容器启动成功，并核对实际面板端口；原生模式打开 7081，Docker 的 7080 用于浏览器画面。 |
 
 ## 配置与网络
 
