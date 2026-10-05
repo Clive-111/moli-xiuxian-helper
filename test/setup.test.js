@@ -14,7 +14,7 @@ const catalog={version:1,regions:[{id:'n',name:'新区域'}],nodes:[{id:'a',regi
 async function harness(options={}) {
  const directory=options.directory??await mkdtemp(path.join(os.tmpdir(),'moli-setup-'));
  let name='青松Player🌙',reads=0,opens=0;
- const ui={config:{},async detectCharacter(){reads++;if(options.error)throw Error(options.error);return name;},async ensureApp(){opens++;},async inspectCatalog(value){return value;},async observe(){return {character:name,mode:'rest',health:{current:'100',maximum:'100'},view:{dialogs:[],activeTab:'游历'},heal:{running:false}};}};
+ const ui={config:{},async detectCharacter(){reads++;if(options.error)throw Error(options.error);return name;},async openForLogin(){opens++;},async ensureApp(){throw Error('首次打开不能等待游戏启动器');},async inspectCatalog(value){return value;},async observe(){return {character:name,mode:'rest',health:{current:'100',maximum:'100'},view:{dialogs:[],activeTab:'游历'},heal:{running:false}};}};
  const params={base:{...base,...options.base},directory,runtime:{profilePath:path.join(directory,'browser'),retrySeconds:[10],recoveryIntervalSeconds:300},signal:new AbortController().signal,log:()=>{},makeUI:async()=>ui,catalogLoader:async()=>structuredClone(catalog)};
  const control=new SetupControl(params);await control.initialize();
  return {control,directory,params,ui,setName:v=>{name=v;},get reads(){return reads;},get opens(){return opens;}};
@@ -30,6 +30,16 @@ test('clean start does not open a browser, write character caches or allow game 
   assert.equal(h.control.snapshot().settings.target,null);
   assert.deepEqual(await readdir(h.directory),[]);
   for(const kind of ['start','refresh','library','inventory-preview','craft-execute'])assert.throws(()=>h.control.command(kind),/绑定/u);
+ }finally{h.control.close();}
+});
+test('open login releases setup queue without reading identity or waiting for the game launcher',async()=>{
+ const h=await harness();try{
+  const result=await h.control.command('setup-open-game').promise;
+  assert.equal(result.ok,true);assert.equal(h.opens,1);assert.equal(h.reads,0);
+  assert.equal(h.control.snapshot().busy,null);assert.equal(h.control.isBound,false);
+  assert.match(result.message,/手动登录/u);assert.deepEqual(await readdir(h.directory),[]);
+  await h.control.command('setup-detect').promise;
+  assert.equal(h.reads,1);assert.match(h.control.reason,/核对完整姓名/u);
  }finally{h.control.close();}
 });
 test('read then confirm rechecks full name; binding remains stopped, with no preset target or consumables',async()=>{

@@ -76,17 +76,23 @@ export class SetupControl extends BattleControl {
     const job = {id:++this.sequence,kind,payload};
     this.pending.set(kind,job);
     job.promise = this.serial(async () => {
-      this.activeCommand = kind; this.publish();
+      this.activeCommand = kind;
+      this.reason = kind === 'setup-open-game' ? '正在打开独立浏览器窗口…' : kind === 'setup-detect' ? '正在读取人物；如浏览器提示登录、授权或存档选择，请手动完成。' : '正在重新核对人物并保存绑定…';
+      this.publish();
       try {
         this.signal.throwIfAborted();
         // Recheck inside the queue: a previous confirmation may have bound it.
         if (this.binding) throw new Error('人物已绑定，请刷新页面。');
         this.ui = await this.makeUI(this.base,this.log,this.ui,false);
-        if (kind === 'setup-open-game') await this.ui.ensureApp();
+        if (kind === 'setup-open-game') {
+          await this.ui.openForLogin();
+          this.reason = '浏览器已打开。请在浏览器中手动登录 Discord；完成后回到面板点击「读取人物」。首次授权或存档选择也需手动完成。';
+        }
         else {
           const name = await this.ui.detectCharacter();
           if (kind === 'setup-detect') {
             this.candidate = {characterName:name,token:randomUUID(),at:this.now()};
+            this.reason = '已读取人物「'+name+'」，请核对完整姓名后确认绑定。';
           } else {
             if (!this.candidate || payload.token !== this.candidate.token || this.now()-this.candidate.at > 300000 || name !== this.candidate.characterName) {
               this.candidate = null;
@@ -100,7 +106,7 @@ export class SetupControl extends BattleControl {
             this.log('已绑定人物：'+name+'；挂机保持停止。');
           }
         }
-        this.lastCommand = {id:job.id,kind,ok:true,at:this.now()};
+        this.lastCommand = {id:job.id,kind,ok:true,message:this.reason,at:this.now()};
       } catch (error) {
         if (!this.binding) this.candidate = null;
         this.lastCommand = {id:job.id,kind,ok:false,error:error.message.split('\n')[0],at:this.now()};

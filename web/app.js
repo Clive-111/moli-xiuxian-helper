@@ -70,7 +70,11 @@ function render(value) {
     text('setup-message',value.reason || '请先打开游戏，手动登录并显示角色头像页。');
     $('setup-bind').disabled = !setup?.candidate || Boolean(value.busy);
     $('setup-open').disabled = $('setup-detect').disabled = Boolean(value.busy);
-    if (value.lastCommand?.kind?.startsWith('setup-')) notice(value.lastCommand.ok ? '操作完成，请继续下一步。' : value.lastCommand.error,value.lastCommand.ok);
+    if (value.busy?.startsWith('setup-')) notice(value.reason || '正在处理首次设置…',true);
+    else if (value.lastCommand?.kind?.startsWith('setup-') && lastCommand !== value.lastCommand.id) {
+      lastCommand = value.lastCommand.id;
+      notice(value.lastCommand.ok ? value.lastCommand.message || '操作完成，请继续下一步。' : value.lastCommand.error,value.lastCommand.ok);
+    }
     return;
   }
   if (!draft || !dirty && revision !== value.revision) resetDraft();
@@ -116,7 +120,9 @@ async function send(kind,payload={}) {
     const url = kind.startsWith('setup-') ? '/api/setup/'+kind.slice(6) : kind.startsWith('inventory-') ? '/api/inventory-actions/'+kind.slice(10) : kind.startsWith('craft-') ? '/api/crafting/'+kind.slice(6) : kind === 'settings' ? '/api/settings' : kind === 'refresh' ? '/api/catalog/refresh' : kind === 'library' ? '/api/library/read' : kind==='bestiary'?'/api/bestiary/read':'/api/commands/'+kind;
     const res = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':token},body:JSON.stringify(payload)});
     const result = await res.json(); if (!res.ok) throw new Error(result.error);
-    notice('操作已排队，正在核对当前游戏状态。',true);
+    // A fast command can finish over SSE before its HTTP receipt arrives.
+    // Do not replace that result with an obsolete queued message.
+    if (snapshot?.lastCommand?.id !== result.id) notice(kind.startsWith('setup-') ? snapshot?.busy === kind ? snapshot.reason : '首次设置操作已提交，正在处理…' : '操作已排队，正在核对当前游戏状态。',true);
     return result;
   } catch (error) { notice(error.message); }
 }

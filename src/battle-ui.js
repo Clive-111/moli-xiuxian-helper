@@ -159,6 +159,27 @@ export class BattleUI {
     if (found.length > 1) throw new PauseError('发现多个游戏界面，无法确认唯一活动。');
     return found[0] ?? null;
   }
+  async openForLogin() {
+    this.signal.throwIfAborted();
+    if (this.page.isClosed()) throw new RetryError('浏览器窗口已关闭，请重新打开游戏。');
+    await this.page.bringToFront();
+    const current = new URL(this.page.url());
+    const channel = new URL(this.config.channelUrl);
+    const atLogin = current.origin === channel.origin && /^\/(login|register)(?:\/|$)/u.test(current.pathname);
+    const atChannel = current.origin === channel.origin && current.pathname === channel.pathname;
+    // Opening the login window must not wait for, or click, the App launcher.
+    // Repeated clicks also leave an in-progress manual login untouched.
+    if (!atLogin && (!atChannel || this.needsNavigate)) {
+      try {
+        await this.page.goto(this.config.channelUrl, {waitUntil:'commit',timeout:15000});
+      } catch (error) {
+        this.signal.throwIfAborted();
+        this.needsNavigate = true;
+        throw new RetryError('Discord 页面未能打开，请检查浏览器中的网络提示及本实例的代理配置后重试。',{cause:error});
+      }
+    }
+    this.needsNavigate = false;
+  }
   async ensureApp() {
     await this.guard();
     let frame = await this.findFrame();
