@@ -109,3 +109,16 @@ test('paused-sale inspection button only requests inspection and never continues
   h.state.inventoryActions.operations[0].pending={lineId:'instance:item-1',quantity:1};h.publish();await h.page.waitForTimeout(80);assert.equal(await button.isDisabled(),true);
  }finally{await h.close();}
 });
+
+test('pending native group displays one per selected instance and preserves legacy stack quantity',async()=>{
+ const h=await setup();try{const id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  const lines=h.items.map((item,index)=>({...item,id:index<2?'instance:item-'+(index+1):'stack:ore',quantity:index<2?1:7,completed:0}));
+  h.state.inventoryActions.activeId=id;h.state.inventoryActions.operations=[{id,kind:'sell',shop:h.state.catalog.shops[0],stage:'awaiting-review',lines,pending:{lineId:lines[0].id,lineIds:lines.slice(0,2).map(l=>l.id),quantity:2}}];h.publish();
+  const rows=h.page.locator('#inventory-status .craft-record > p').filter({hasText:'已确认'});
+  await rows.first().waitFor();assert.equal(await rows.count(),3);
+  assert.match(await rows.nth(0).innerText(),/已确认 0 \/ 1 · 待核对 1/u);assert.match(await rows.nth(1).innerText(),/已确认 0 \/ 1 · 待核对 1/u);assert.doesNotMatch(await rows.nth(2).innerText(),/待核对/u);
+  h.state.inventoryActions.operations[0].pending={lineId:'stack:ore',quantity:7};h.publish();
+  await h.page.waitForFunction(()=>document.querySelector('#inventory-status').textContent.includes('待核对 7'));
+  assert.doesNotMatch(await rows.nth(0).innerText(),/待核对/u);assert.match(await rows.nth(2).innerText(),/已确认 0 \/ 7 · 待核对 7/u);assert.equal(h.calls.length,0);assert.deepEqual(h.errors,[]);
+ }finally{await h.close();}
+});

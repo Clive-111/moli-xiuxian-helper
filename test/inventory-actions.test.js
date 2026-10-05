@@ -42,6 +42,48 @@ async function setup(options={}){
 }
 async function preview(h,ids=['instance:item-1','instance:item-2']){const r=await h.c.command('inventory-preview',{kind:'sell',ids}).promise;assert.ok(r.ok,r.error);return r.previewId;}
 
+async function nativeHarness(options={}){
+ const h=await setup(options);let items=Array.from({length:options.count??3},(_,index)=>gear('item-'+(index+1))),groups=[];
+ if(options.stack)items.push(stack());
+ const inventory=()=>({items:structuredClone(items),equipment:[],updatedAt:Date.now()});
+ h.adapter.inventory=async()=>inventory();h.adapter.reader.read=async()=>inventory();h.adapter.supportsBulkSale=async()=>true;
+ h.adapter.sellInstances=async(lines,store,fence)=>{
+  await fence({kind:'sell',evidenceSource:'shop-bulk-v1',lines:structuredClone(lines),line:lines[0],quantity:lines.length,beforeSale:{items:structuredClone(items)},shop:store});
+  groups.push(lines.map(l=>l.id));items=items.filter(i=>!lines.some(l=>l.identity===i.identity));
+  await options.afterBulk?.();if(options.bulkTimeout)throw Error('batch response lost');return {saved:true,verifiedAt:Date.now(),evidenceSource:'shop-bulk-v1'};
+ };
+ h.adapter.recover=async pending=>{assert.ok(pending.lines.every(l=>!items.some(i=>i.identity===l.identity)));return {saved:true,verifiedAt:Date.now(),evidenceSource:'shop-bulk-v1'};};
+ h.adapter.sell=async(line,quantity,store,fence)=>{const before=inventory();await fence({kind:'sell',before,line,quantity});h.actions.push(['stack',quantity]);items.find(i=>itemId(i)===line.id).quantity-=quantity;return {saved:true,verifiedAt:Date.now()};};
+ return {...h,groups,get items(){return items;}};
+}
+
+test('native groups cap at 1000 and remaining stacks retain exact requested quantities',async()=>{
+ const h=await nativeHarness({count:1001,stack:true}),id=await preview(h,h.items.map(itemId));
+ const result=await h.c.command('inventory-execute',{previewId:id,quantities:{'stack:ore':7}}).promise;
+ assert.ok(result.ok,result.error);assert.deepEqual(h.groups.map(g=>g.length),[1000,1]);
+ assert.deepEqual(h.actions.filter(a=>Array.isArray(a)&&a[0]==='stack'),[['stack',7]]);
+ const op=h.c.inventoryActions.data.operations[id];assert.equal(op.stage,'completed');assert.ok(op.lines.every(l=>l.completed===l.quantity));assert.equal(op.pending,null);
+});
+test('native group timeout persists every pending ID; restart review confirms atomically without another submission',async()=>{
+ const h=await nativeHarness({bulkTimeout:true}),id=await preview(h,h.items.map(itemId));
+ assert.equal((await h.c.command('inventory-execute',{previewId:id}).promise).ok,false);
+ const pending=h.c.inventoryActions.active.pending;assert.equal(pending.entries.length,3);assert.equal(h.c.inventoryActions.active.lines.filter(l=>l.completed).length,0);
+ assert.deepEqual(h.c.inventoryActions.snapshot().operations[0].pending.lineIds,pending.lines.map(l=>l.id));
+ const c=new BattleControl(h.params);await c.initialize();c.close();
+ assert.ok((await c.command('inventory-review',{operationId:id}).promise).ok);assert.equal(h.groups.length,1);assert.equal(c.inventoryActions.data.operations[id].stage,'completed');assert.ok(c.inventoryActions.data.operations[id].lines.every(l=>l.completed===1));
+});
+test('stop during a native group verifies issued IDs and cancels all unsubmitted stack quantities',async()=>{
+ let release,entered;const ready=new Promise(r=>entered=r),gate=new Promise(r=>release=r);
+ const h=await nativeHarness({stack:true,afterBulk:async()=>{entered();await gate;}}),id=await preview(h,h.items.map(itemId));
+ const execute=h.c.command('inventory-execute',{previewId:id});await ready;const stop=h.c.command('stop');await h.c.inventoryActions.tail;release();
+ assert.ok((await execute.promise).ok);assert.ok((await stop.promise).ok);assert.equal(h.groups.length,1);assert.equal(h.c.record.desired,'stopped');
+ const op=h.c.inventoryActions.data.operations[id];assert.equal(op.stage,'cancelled');assert.ok(op.lines.filter(l=>l.identity).every(l=>l.completed===1));assert.equal(op.lines.find(l=>!l.identity).completed,0);assert.equal(op.pending,null);
+});
+test('native group issue-write failure fences the whole consuming click',async()=>{
+ const h=await nativeHarness({inventoryOptions:{write:async(file,data)=>{if(data.operations[data.activeId]?.pending)throw Error('disk full');await atomicJson(file,data);}}}),id=await preview(h,h.items.map(itemId));
+ assert.equal((await h.c.command('inventory-execute',{previewId:id}).promise).ok,false);assert.equal(h.groups.length,0);assert.equal(h.c.inventoryActions.active.pending,null);
+});
+
 async function equipmentHarness(options={}){
  const h=await setup(options),slot=options.slot??'body';let bag=[gear('item-1','100',slot),gear('item-2','100',slot)],worn={...gear('old','90',slot),equipped:true},equips=0;
  const inventory=()=>({items:structuredClone(bag),slot:structuredClone(worn),equipment:[structuredClone(worn)],updatedAt:Date.now()});

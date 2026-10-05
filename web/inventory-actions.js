@@ -138,7 +138,7 @@
         body.append(row);
       }
       if(preview.comparison)body.append(n('pre','inventory-comparison',preview.comparison));
-      body.append(n('p','hint',preview.kind==='sell'?'只卖出本次确认的数量，不追加后来获得的库存；已穿戴物品不会卸下出售。':'通过游戏内装备按钮更换；核对编号及旧装备回包。'));
+      body.append(n('p','hint',preview.kind==='sell'?'器物和炼材优先勾选后统一售出，每组最多 1000 件；叠加物品按确认数量处理。不追加后来获得的物品，也不卸下已穿戴装备。':'通过游戏内装备按钮更换；核对编号及旧装备回包。'));
       body.append(n('p','hint','操作完成后核对游戏本地保存，再恢复原挂机状态；不上传云存档。'));
       const execute=button(preview.kind==='sell'?'确认卖出本批':'更换装备',()=>{const quantities={};for(const input of body.querySelectorAll('[data-line-id]')){if(!input.reportValidity())return;quantities[input.dataset.lineId]=Number(input.value);}void request('execute',{previewId:preview.id,quantities});},preview.kind==='sell'?'danger':'primary');
       execute.disabled=blocked()||Boolean(state.inventoryActions?.operations.some(o=>o.id===preview.id));body.append(execute);
@@ -157,7 +157,7 @@
   function records(){const root=$('inventory-status');root.replaceChildren();const ops=state.inventoryActions?.operations??[];if(!ops.length)return;
     const active=ops.find(o=>o.id===state.inventoryActions.activeId),history=n('details');history.append(n('summary','',`物品操作记录 · ${ops.length}`));
     const record=o=>{const box=n('article','craft-record');box.append(n('strong','',`${o.kind==='sell'?'卖出':'换装'} · ${names[o.stage]??o.stage}`));
-      for(const l of o.lines){const waiting=o.pending?.lineId===l.id?o.pending.quantity:0;box.append(n('p','',`${l.name} · ${l.identity||l.gameItemId} · ${l.quality?'品质 '+l.quality+' · ':''}已确认 ${l.completed} / ${l.quantity}${waiting?' · 待核对 '+waiting:''}${o.stage==='cancelled'?' · 其余已取消':''}`));}
+      for(const l of o.lines){const waiting=o.pending?.lineIds?o.pending.lineIds.includes(l.id)?1:0:o.pending?.lineId===l.id?o.pending.quantity:0;box.append(n('p','',`${l.name} · ${l.identity||l.gameItemId} · ${l.quality?'品质 '+l.quality+' · ':''}已确认 ${l.completed} / ${l.quantity}${waiting?' · 待核对 '+waiting:''}${o.stage==='cancelled'?' · 其余已取消':''}`));}
       if(o.kind==='sell')box.append(n('p','hint','本批卖出地点：'+shopTitle(o.shop)));
       box.append(n('p','hint',o.pending?'本次动作及本地保存仍待核对':'已确认的项目均已核对游戏本地保存。'));if(o.error)box.append(n('p','reason',o.error));box.append(n('small','muted',`${date(o.updatedAt)} · ${o.id}`));
       const selectedShop=o.kind==='sell'?chosenShop():null,changeShop=selectedShop&&selectedShop.id!==o.shop?.id;

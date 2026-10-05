@@ -4,6 +4,7 @@ import {atomicJson,readJson} from './control-store.js';
 import {InventoryUI} from './inventory-ui.js';
 import {DEFAULT_SALE_TARGET,saleShop} from './catalog.js';
 import {freezeSale,findItem,exactQuantity,TRADE_LIMIT,SLOT_LABELS} from './inventory-proof.js';
+import {NATIVE_SALE_LIMIT} from './native-sale-ui.js';
 
 export class InventoryControl {
   constructor(control,{write=atomicJson,makeUI=(ui,knowledge)=>new InventoryUI(ui,{knowledge})}={}){
@@ -21,7 +22,7 @@ export class InventoryControl {
   snapshot(){
     return {activeId:this.data.activeId,saleTarget:this.control.record?.settings?.saleTarget??DEFAULT_SALE_TARGET,
       previews:Object.values(this.data.previews).slice(-20),operations:Object.values(this.data.operations).slice(-50).reverse().map(o=>{
-        const {pending,...rest}=o;return {...rest,pending:pending?{lineId:pending.line.id,quantity:pending.quantity,issuedAt:pending.issuedAt}:null};
+        const {pending,...rest}=o;return {...rest,pending:pending?{lineId:pending.line.id,lineIds:pending.lines?.map(l=>l.id),quantity:pending.quantity,issuedAt:pending.issuedAt}:null};
       })};
   }
   requestStop(){return this.change(d=>{d.stopRequested=true;if(d.activeId){d.operations[d.activeId].cancelRequested=true;d.operations[d.activeId].resumeDesired=false;}});}
@@ -93,6 +94,19 @@ export class InventoryControl {
       await a.stopActivity(stage=>{this.guard();return this.patch(id,{stage});});
       const batch=this.data.operations[id];
       if(batch.kind==='sell'){this.guard();await a.beginSaleBatch(batch.lines,batch.shop);}
+      if(batch.kind==='sell'&&a.supportsBulkSale&&await a.supportsBulkSale()){
+        const entries=batch.lines.flatMap((line,index)=>line.identity&&line.quantity-line.completed>0?[{line,index,quantity:1}]:[]);
+        for(let offset=0;offset<entries.length;offset+=NATIVE_SALE_LIMIT){
+          this.guard();if(this.data.operations[id].pending)throw new Error('存在待核对批量，不能重复提交');
+          const group=entries.slice(offset,offset+NATIVE_SALE_LIMIT);
+          await this.patch(id,{stage:'executing',error:''});
+          const local=await a.sellInstances(group.map(e=>e.line),batch.shop,async evidence=>{
+            this.guard();await this.patch(id,{pending:{...evidence,entries:group,index:group[0].index,issuedAt:Date.now()},stage:'issued'});this.guard();
+          });
+          if(!local?.saved||!local.verifiedAt)throw new Error('批量售出或本地保存仍待核对');
+          await this.confirmBulk(id,local);
+        }
+      }
       for(let index=0;index<this.data.operations[id].lines.length;index++){
         while(true){
           this.guard();const op=this.data.operations[id],line=op.lines[index],remaining=line.quantity-line.completed;if(remaining<=0)break;
@@ -119,6 +133,16 @@ export class InventoryControl {
     await this.change(d=>{const o=d.operations[id];o.lines[index].completed+=quantity;o.lines[index].verifiedAt=local.verifiedAt;o.pending=null;o.stage='verified';o.updatedAt=Date.now();});
     this.control.log(`物品${this.data.operations[id].kind==='sell'?'卖出':'换装'}已核对：${this.data.operations[id].lines[index].name} · ${this.data.operations[id].lines[index].id} × ${quantity}；本地保存已就绪${local.evidenceSource==='shop-v1'?'，售出页核对':''}${elapsed==null?'':`，提交至核对 ${elapsed} ms`}。`);
   }
+  async confirmBulk(id,local){
+    const pending=this.data.operations[id].pending;
+    if(pending?.evidenceSource!=='shop-bulk-v1'||!pending.entries?.length)throw new Error('批量待核对记录缺失');
+    await this.change(d=>{
+      const op=d.operations[id];
+      for(const entry of pending.entries){const line=op.lines[entry.index];if(line.id!==entry.line.id||line.completed+entry.quantity!==line.quantity)throw new Error('批量清单归属或剩余数量不符');line.completed+=entry.quantity;line.verifiedAt=local.verifiedAt;}
+      op.pending=null;op.stage='verified';op.updatedAt=Date.now();
+    });
+    this.control.log(`批量售出已核对：${pending.entries.length} 件器物/炼材；逐项编号消失及本地保存均已确认。`);
+  }
   async review({operationId,inspectSale=false}){
     const op=this.active;if(!op||op.id!==operationId)throw new Error('没有对应的待处理批次');
     if(inspectSale){
@@ -133,7 +157,7 @@ export class InventoryControl {
     }
     try{
       const a=await this.adapter();
-      if(op.pending){const local=await a.recover(op.pending);await this.confirm(op.id,op.pending.index,op.pending.quantity,local);}
+      if(op.pending){const local=await a.recover(op.pending);if(!local?.saved||!local.verifiedAt)throw new Error('操作或本地保存仍待核对');if(op.pending.evidenceSource==='shop-bulk-v1')await this.confirmBulk(op.id,local);else await this.confirm(op.id,op.pending.index,op.pending.quantity,local);}
       const current=this.active;
       if(current.lines.every(l=>l.completed===l.quantity)||current.cancelRequested)await this.finish(op.id,a,Boolean(current.cancelRequested));
       else await this.patch(op.id,{stage:'awaiting-continue',error:'已核对已发出动作；剩余清单尚未执行，请继续或取消剩余'});

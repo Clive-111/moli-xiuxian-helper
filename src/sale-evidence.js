@@ -7,6 +7,8 @@ export function readSaleDOM() {
   const root=views[0],tabs=[...root.querySelectorAll('[role="tablist"][aria-label="商店买卖"] [role="tab"]')].filter(e=>text(e)==='售出');
   const search=root.querySelector('input[aria-label="查找交易物品"]');
   const lists=root.querySelectorAll('.entry-list');
+  const categories=root.querySelector('[aria-label="售出物品类别"]');
+  if(categories){const all=[...categories.querySelectorAll('button')].filter(el=>text(el)==='全部');if(all.length!==1||all[0].getAttribute('aria-pressed')!=='true')throw new Error('售出类别仍在筛选，不能核对库存');}
   if(tabs.length!==1||tabs[0].getAttribute('aria-selected')!=='true'||!search||search.value||lists.length!==1||root.querySelector('[aria-busy="true"],[role="progressbar"],.loading'))throw new Error('售出列表仍在加载、筛选或标签未就绪');
   const exact=value=>/^\d[\d,]*$/u.test(value)?value.replaceAll(',',''):null;
   const items=[...lists[0].querySelectorAll('button.entry')].map(el=>{
@@ -51,4 +53,17 @@ export function shopSaleProof(before,after,line,quantity) {
   if(line.identity)return !next;
   if(old.quantity==null||next&&next.quantity==null)return false;
   return BigInt(old.quantity)-BigInt(next?.quantity??'0')===BigInt(quantity);
+}
+
+export function shopBulkSaleProof(before,after,lines) {
+  if(!lines.length||new Set(lines.map(l=>l.identity)).size!==lines.length||!after.saved||after.shopName!==before.shopName||after.locationName!==before.locationName||JSON.stringify(after.equipped)!==JSON.stringify(before.equipped))return false;
+  const sold=new Set(lines.map(l=>l.identity));
+  for(const line of lines){if(!line.identity||!saleRow(before,line)||saleRow(after,line,{missing:true}))return false;}
+  // Equipped rows have no IDs; their sorted multiset above already preserves
+  // duplicates (for example two identical accessories) and their quantities.
+  for(const old of before.items.filter(i=>!i.equipped&&!sold.has(i.identity))){
+    const next=after.items.filter(i=>old.identity?i.identity===old.identity:!i.identity&&i.equipped===old.equipped&&i.name===old.name&&i.quality===old.quality&&i.category===old.category);
+    if(next.length!==1||next[0].name!==old.name||next[0].quality!==old.quality||next[0].equipped!==old.equipped||next[0].countText!==old.countText)return false;
+  }
+  return true;
 }

@@ -4,6 +4,7 @@ import {linkLibrary} from './farming.js';
 import {SLOT_LABELS,itemId,findItem,validateLine,saleProof,equipProof} from './inventory-proof.js';
 import {sleep} from './runtime.js';
 import {readSaleDOM,saleRow,shopSaleProof} from './sale-evidence.js';
+import {NativeSaleUI} from './native-sale-ui.js';
 
 // Only visible game controls and DOM evidence. Never invoke game commands or
 // read/write the game's store, and never upload a cloud save.
@@ -47,6 +48,7 @@ export class InventoryUI {
   }
   async recover(pending){
     this.reader.completionOnly=true;
+    if(pending.evidenceSource==='shop-bulk-v1')return new NativeSaleUI(this).recover(pending);
     if(pending.kind==='sell'&&pending.evidenceSource==='shop-v1')return this.recoverSale(pending);
     await this.ui.observe({allowObstructed:true});await this.closeIssuedDialog(pending);await this.leaveShop();
     const after=await this.inventory(pending.line.slot),saved=await this.localReady();
@@ -87,7 +89,14 @@ export class InventoryUI {
       await this.reader.verify();ui.beforeAction?.('清除商店物品筛选',{cleanup:this.reader.completionOnly===true});await search.fill('');
       await ui.waitFor(async()=>await search.inputValue()==='','商店筛选清空');
     }
+    const categories=view.getByRole('group',{name:'售出物品类别',exact:true});
+    if(await categories.count()){
+      const all=categories.getByRole('button',{name:'全部',exact:true});
+      await this.reader.click(all,'显示全部售出物品',{browsing:true,cleanup:this.reader.completionOnly===true,isComplete:async()=>await all.getAttribute('aria-pressed')==='true'});
+    }
   }
+  async supportsBulkSale(){return new NativeSaleUI(this).supported();}
+  async sellInstances(lines,shop,onIssued){return new NativeSaleUI(this).sell(lines,shop,onIssued);}
   async prepareSale(line,quantity,shop){
     this.reader.completionOnly=false;
     if(!this.saleBatch||this.saleBatch.shop.name!==shop.name)await this.beginSaleBatch([line],shop);
