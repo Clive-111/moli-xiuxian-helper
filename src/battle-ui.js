@@ -5,6 +5,7 @@ import { entryOutcome, healthStatus } from './battle.js';
 import { sleep } from './runtime.js';
 import { validateConsumables } from './consumables.js';
 import { ViewRecoveryError, checkBattleIdentity, requireBattleView } from './battle-view.js';
+import { isGamePage } from './browser.js';
 
 const DIALOGS = '[role="dialog"],[role="alertdialog"],dialog[open],[aria-modal="true"]';
 const PLAYER = '[data-player-panel],aside.character-panel';
@@ -107,11 +108,20 @@ export function readGameSnapshot(expectedCharacter) {
 export class BattleUI {
   constructor(page, config, runtime, log, signal, { recoveryWait = sleep } = {}) {
     Object.assign(this, { page, config, runtime, log, signal, recoveryWait });
+    this.entryPage = page;
+    this.trackedPages = new WeakSet();
+    this.trackPage(page);
     this.consumables = validateConsumables(config.consumables);
     this.needsNavigate = true;
   }
+  trackPage(page) {
+    if (this.trackedPages.has(page)) return;
+    this.trackedPages.add(page);
+    page.on('crash',()=>{if(this.page===page)this.crashed=true;});
+  }
   async guard() {
     this.signal.throwIfAborted();
+    if (this.page.isClosed() || this.page.context().pages().length > 1) await this.findFrame();
     if (this.page.isClosed()) throw new RetryError('战斗页面已关闭，重新建立本任务页面。');
     if (/\/(login|register)(?:[/?]|$)/u.test(this.page.url())) throw new PauseError('请在浏览器中登录 Discord。');
     if (await this.isDesktopHandoff()) throw new PauseError('当前页面打开了 Discord 桌面客户端，尚未进入网页版。请点击「打开游戏 / 登录」，在独立浏览器中登录后再读取人物。');
@@ -149,16 +159,30 @@ export class BattleUI {
   }
   async findFrame() {
     const found = [];
-    for (const frame of this.page.frames()) {
-      if (frame === this.page.mainFrame()) continue;
+    const pages=this.page.context().pages().filter(page=>page===this.page || page===this.entryPage || isGamePage(page,this.config.channelUrl));
+    for (const page of pages) for (const frame of page.frames()) {
+      if (frame === page.mainFrame()) continue;
       try {
+        if (!await (await frame.frameElement()).isVisible()) continue;
         const manual = frame.getByRole('heading', { name: /存档冲突|选择存档|创建角色|授权|验证/u });
         if (await manual.count() && await manual.first().isVisible()) throw new PauseError('游戏需要手动确认存档、角色或授权。');
         if (await frame.locator('body').count() && await frame.locator('body').evaluate(el => el.querySelector('aside.character-panel') && el.querySelector('main') || /气血/u.test(el.innerText) && /山河图|正在探索|调息/u.test(el.innerText))) found.push(frame);
       } catch (error) { if (!/detached|destroyed|closed/iu.test(error.message)) throw error; }
     }
     if (found.length > 1) throw new PauseError('发现多个游戏界面，无法确认唯一活动。');
-    return found[0] ?? null;
+    const frame=found[0] ?? null;
+    if (frame) { this.page=frame.page(); this.trackPage(this.page); this.needsNavigate=false; }
+    return frame;
+  }
+  async observeExisting() {
+    this.signal.throwIfAborted();
+    const frame=await this.findFrame();
+    if (!frame) throw new RetryError('未找到已打开的游戏画面。请打开游戏；频道页和独立弹出窗口均可读取。');
+    const state=await frame.evaluate(readGameSnapshot,this.config.characterName);
+    checkBattleIdentity(state,this.config.characterName);
+    if (!state.character) throw new ViewRecoveryError('人物姓名暂不可见，请在游戏中显示角色头像页。');
+    this.frame=frame;
+    return state;
   }
   async openForLogin() {
     this.signal.throwIfAborted();

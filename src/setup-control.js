@@ -79,7 +79,7 @@ export class SetupControl extends BattleControl {
     await super.initialize();
     this.initialized = true;
     this.candidate = null;
-    if (!this.record.settings.target) this.reason = '人物已绑定；请刷新地点目录，选择战斗目标并保存，然后启动挂机。';
+    if (!this.record.gameClosed && !this.record.settings.target) this.reason = '人物已绑定；请刷新地点目录，选择战斗目标并保存，然后启动挂机。';
     this.publish();
   }
   command(kind,payload={},options={}) {
@@ -129,6 +129,8 @@ export class SetupControl extends BattleControl {
             this.binding = binding;
             this.initialized = false;
             await this.initializeBound();
+            try { await this.readStatus(); }
+            catch { this.reason='人物已绑定，状态尚未读到，请检查游戏画面或点击「读取状态」。挂机保持停止。'; }
             this.log('已绑定人物：'+name+'；挂机保持停止。');
           }
         }

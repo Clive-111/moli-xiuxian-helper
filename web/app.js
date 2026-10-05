@@ -93,7 +93,8 @@ function render(value) {
   text('health',value.state?.health ? `${value.state.health.current} / ${value.state.health.maximum}` : '—');
   $('hp-bar').value = value.state?.health?.percent ?? 0;
   text('updated',value.updatedAt ? `${value.gameClosed?'关闭前记录':'更新于'} ${date(value.updatedAt)}` : value.gameClosed?'未连接游戏':'等待读取游戏');
-  text('reason',value.reason); $('reason').hidden = !value.reason;
+  const reason=[...new Set([value.reason,value.statusError].filter(Boolean))].join(' ');
+  text('reason',reason); $('reason').hidden = !reason;
   text('busy',value.closingGame ? '等待当前操作核对结束后断开…' : value.busy ? '正在处理操作…' : '');
   text('active-battle',value.settings.target ? `当前生效：${value.settings.target.regionName} / ${value.settings.target.stageName}` : '尚未选择战斗目标，请先刷新地点目录');
   text('active-healing',`当前生效：${value.settings.healingTarget ? value.settings.healingTarget.regionName+' / '+value.settings.healingTarget.locationName : '就地调息'}`);

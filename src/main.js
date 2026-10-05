@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { loadConfig, root } from './config.js';
 import { acquireLock, createLogger } from './runtime.js';
-import { bypassHttpCache, closeBattlePages } from './browser.js';
+import { bypassHttpCache, closeBattlePages, isGamePage } from './browser.js';
 import { BattleUI } from './battle-ui.js';
 import { SetupControl } from './setup-control.js';
 import { startControlServer } from './control-server.js';
@@ -43,17 +43,17 @@ try {
     diagnostics:(ui,reason) => ui?.diagnostics(path.join(logger.directory,'battle'),reason),
     closeGamePage:async ui => { if (browserSession.context) await closeBattlePages(browserSession.context,{page:ui?.page,channelUrl:config.battle.channelUrl}); },
     makeUI:async (battle,taskLog,previous,reconnect) => {
+      if (previous && !previous.crashed && previous.page.isClosed() && await previous.findFrame()) return previous;
       if (previous && !reconnect && !previous.page.isClosed() && !previous.crashed) return previous;
       const browser = await browserSession.get();
       let page = previous?.page;
       if (!page || page.isClosed() || previous.crashed) {
         await page?.close().catch(()=>{});
-        page = browser.pages().find(p => p.url() === battle.channelUrl || p.url() === 'about:blank') ?? await browser.newPage();
+        page = browser.pages().find(p => isGamePage(p,battle.channelUrl)) ?? browser.pages().find(p => p.url()==='about:blank') ?? await browser.newPage();
         if (process.env.CONTAINER_PROFILE_PATH) await bypassHttpCache(browser,page);
       }
       page.setDefaultTimeout(config.responseTimeoutSeconds * 1000);
       const ui = new BattleUI(page,battle,config,taskLog,abort.signal);
-      page.on('crash',() => { ui.crashed = true; });
       return ui;
     },
   });

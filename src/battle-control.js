@@ -95,6 +95,7 @@ export class BattleControl extends EventEmitter {
     if(this.inventoryActions.active){this.phase='attention';this.reason='存在待处理物品清单，请仅核对结果或取消剩余；不会自动重放卖出或换装';}
     if(this.record.gameClosed){this.phase='closed';this.reason=this.closedReason();}
     this.needsPreflight = true;
+    this.nextStatusRead = 0;
     this.timer = setInterval(() => {
       if(this.record.gameClosed || this.closeRequests) return;
       if(this.crafting.startupReviewId&&!this.signal.aborted&&!this.pending.size&&!this.tickQueued&&!this.stopRequests&&!this.inventoryActions.active){
@@ -108,6 +109,10 @@ export class BattleControl extends EventEmitter {
         this.tickQueued = true;
         void this.serial(() => this.tick()).finally(() => { this.tickQueued = false; });
       }
+      if (this.statusReadAllowed() && !this.tickQueued && !this.pending.size && this.now() >= this.nextStatusRead) {
+        this.tickQueued=true;
+        void this.serial(()=>this.readStatus()).catch(()=>{}).finally(()=>{this.tickQueued=false;});
+      }
     }, 250);
     this.signal.addEventListener('abort', () => this.close(), { once: true });
     this.log(`控制面板已接管战斗任务，保存的状态：${this.record.gameClosed ? '游戏已关闭，不自动连接' : this.record.desired === 'running' ? '运行' : '停止'}。`);
@@ -120,6 +125,25 @@ export class BattleControl extends EventEmitter {
   }
   persist(record) { return this.write(path.join(this.directory, 'settings.json'), record); }
   automaticLibraryAllowed() { return !this.record.gameClosed&&this.record.desired==='running'&&!this.stopRequests; }
+  statusReadAllowed() {
+    return !this.signal.aborted && !this.record?.gameClosed && !this.closeRequests && !this.stopRequests
+      && this.record?.desired==='stopped' && ['stopped','attention'].includes(this.phase)
+      && !this.crafting.active && !this.inventoryActions.active && typeof this.ui?.observeExisting==='function';
+  }
+  async readStatus() {
+    // Never launch/recover/navigate from the stopped-state polling loop.
+    if (this.record?.gameClosed || this.closeRequests || this.stopRequests || this.signal.aborted) return {skipped:'stopped'};
+    if (!this.ui?.observeExisting) return {skipped:'no-browser'};
+    try {
+      const ui=this.ui,state=await ui.observeExisting();
+      if (ui!==this.ui || this.record.gameClosed || this.closeRequests || this.stopRequests || this.signal.aborted) return {skipped:'stopped'};
+      this.state=state;this.updatedAt=this.now();this.statusError='';
+    } catch (error) {
+      this.statusError=error.message.split('\n')[0];
+      if (error instanceof PauseError && this.record.desired==='running') {this.phase='attention';this.reason=this.statusError;}
+      throw error;
+    } finally {this.nextStatusRead=this.now()+5000;this.publish();}
+  }
   closedReason() {
     return '战斗游戏连接已关闭，可在其他设备游玩；点击「打开游戏」后才能操作。' +
       (this.inventoryActions.active||this.crafting.active ? ' 未确认操作记录已保留，重新打开后仅核对，不自动重做。' : '');
@@ -131,7 +155,7 @@ export class BattleControl extends EventEmitter {
   }
   snapshot() {
     return { phase: this.phase, desired: this.record?.desired, gameClosed: this.record?.gameClosed===true, closingGame: this.closeRequests>0, reason: this.reason, busy: this.activeCommand ?? null,
-      revision: this.record?.revision, settings: this.record?.settings, state: this.state, updatedAt: this.updatedAt ?? null,
+      revision: this.record?.revision, settings: this.record?.settings, state: this.state, updatedAt: this.updatedAt ?? null,statusError:this.statusError ?? '',
       catalog: this.catalog ?? null, catalogError: this.catalogError ?? '', logs: this.logs, lastCommand: this.lastCommand,
       library: {revision:this.library.revision,errors:this.libraryErrors,sync:{intervalMs:LIBRARY_INTERVAL_MS,nextAt:this.librarySyncAt??0,deferred:this.libraryDeferred?.views??[]},views:Object.fromEntries(Object.entries(this.library.views).map(([key,value])=>[key,{updatedAt:value.updatedAt,count:value.items.length}]))},
       bestiary:{revision:this.bestiary?.revision??0,updatedAt:this.bestiary?.updatedAt??null,error:this.bestiaryError,knowledgeRevision:this.knowledge?.revision??null},
@@ -149,7 +173,7 @@ export class BattleControl extends EventEmitter {
       if (this.signal.aborted || this.stopRequests && this.activeCommand !== 'stop' && !completing) throw new ControlInterrupted('已收到停止请求，禁止继续发起游戏操作');
       this.log(`操作：${label}`);
     };
-    this.ui.onSnapshot = state => { this.state = state; this.updatedAt = this.now(); this.publish(); };
+    this.ui.onSnapshot = state => { this.state = state; this.updatedAt = this.now(); this.statusError=''; this.publish(); };
     if (!this.runner) this.runner = new BattleRunner(this.ui, this.config, this.log);
     else this.runner.ui = this.ui;
   }
@@ -217,7 +241,7 @@ export class BattleControl extends EventEmitter {
   }
   command(kind, payload = {}, {continuation=false}={}) {
     if(this.closeRequests&&kind!=='close-game')throw new ControlInterrupted('正在关闭游戏，请等待关闭完成');
-    if (!['start', 'stop', 'resume', 'restart', 'open-game', 'close-game', 'settings', 'refresh', 'library','bestiary','craft-preview','craft-execute','craft-review','craft-confirm','craft-sync','craft-delete','inventory-preview','inventory-execute','inventory-equip','inventory-review','inventory-continue','inventory-cancel'].includes(kind)) throw new Error('未知控制命令');
+    if (!['start', 'stop', 'resume', 'restart', 'open-game', 'close-game', 'status', 'settings', 'refresh', 'library','bestiary','craft-preview','craft-execute','craft-review','craft-confirm','craft-sync','craft-delete','inventory-preview','inventory-execute','inventory-equip','inventory-review','inventory-continue','inventory-cancel'].includes(kind)) throw new Error('未知控制命令');
     if(kind==='library'&&payload.views!=null){
       if(!Array.isArray(payload.views)||!payload.views.length||payload.views.length>LIBRARY_SYNC_VIEWS.length||new Set(payload.views).size!==payload.views.length||payload.views.some(v=>!LIBRARY_SYNC_VIEWS.includes(v))||payload.key||payload.view)throw new Error('批量查看页面无效');
       payload={...payload,views:LIBRARY_SYNC_VIEWS.filter(v=>payload.views.includes(v))};
@@ -295,6 +319,10 @@ export class BattleControl extends EventEmitter {
     if(this.record.gameClosed){
       if(kind==='stop'){this.phase='closed';this.reason=this.closedReason();return;}
       throw new ControlInterrupted('游戏已关闭，请先点击「打开游戏」；不会自动连接');
+    }
+    if(kind==='status'){
+      if(this.stopRequests)throw new ControlInterrupted('正在停止，请稍后读取状态');
+      await this.connect();return this.readStatus();
     }
     // These two operations only edit panel settings / download public definitions.
     // They are safe while a batch is paused and never resume or alter its lines.
@@ -432,6 +460,7 @@ export class BattleControl extends EventEmitter {
     this.record=record;this.phase='closing';this.reason='正在关闭战斗游戏连接';this.publish();
     await this.closeGamePage(this.ui);
     this.ui=null;this.needsPreflight=true;
+    this.statusError='';
     this.phase='closed';this.reason=this.closedReason();
     this.log('战斗游戏页面已关闭；面板、登录资料和原游历保留，不再自动连接。');
     if(saveError)throw new Error(`游戏已断开，但关闭状态无法保存：${saveError.message}；请勿重启容器，修复后重新点击关闭游戏`);

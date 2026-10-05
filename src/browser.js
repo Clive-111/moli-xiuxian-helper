@@ -7,6 +7,14 @@ export async function bypassHttpCache(context, page) {
   return session;
 }
 
+export function isGamePage(page, channelUrl) {
+  if (page.isClosed()) return false;
+  try {
+    const current=new URL(page.url()),channel=new URL(channelUrl);
+    return current.origin===channel.origin && (current.pathname===channel.pathname || current.pathname==='/popout');
+  } catch { return false; }
+}
+
 // Closing one game must never close the shared context or the travel page.
 // Also dispose any game-owned popups, including pages restored at startup.
 export async function closeBattlePages(context, { page, channelUrl, claimed = new Set() }) {

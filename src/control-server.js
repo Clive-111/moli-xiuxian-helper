@@ -76,7 +76,7 @@ export async function startControlServer(control, { port = 7081, host = '127.0.0
           if(url.pathname==='/api/farming/maps')return json(200,control.planMaps(payload));
           const craft=/^\/api\/crafting\/(preview|execute|review|confirm|sync|delete)$/u.exec(url.pathname)?.[1];
           const inventory=/^\/api\/inventory-actions\/(preview|execute|equip|review|continue|cancel)$/u.exec(url.pathname)?.[1];
-          const kind = inventory?'inventory-'+inventory:craft?'craft-'+craft:url.pathname === '/api/settings' ? 'settings' : url.pathname === '/api/catalog/refresh' ? 'refresh' : url.pathname === '/api/library/read' ? 'library' : url.pathname === '/api/bestiary/read' ? 'bestiary' : /^\/api\/commands\/(start|stop|resume|restart|open-game|close-game)$/u.exec(url.pathname)?.[1];
+          const kind = inventory?'inventory-'+inventory:craft?'craft-'+craft:url.pathname === '/api/settings' ? 'settings' : url.pathname === '/api/catalog/refresh' ? 'refresh' : url.pathname === '/api/library/read' ? 'library' : url.pathname === '/api/bestiary/read' ? 'bestiary' : /^\/api\/commands\/(start|stop|resume|restart|open-game|close-game|status)$/u.exec(url.pathname)?.[1];
           if (!kind) return json(404, { error: '接口不存在' });
           const job = control.command(kind, payload); return json(202, { id: job.id, kind: job.kind, ...(job.skipped?{skipped:job.skipped}:{}) });
         } catch (error) { return json(error.statusCode ?? 400, { error: error.message }); }
