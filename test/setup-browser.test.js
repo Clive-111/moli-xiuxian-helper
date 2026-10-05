@@ -12,10 +12,10 @@ let browser;
 before(async()=>{browser=await chromium.launch({channel:process.env.TEST_BROWSER_CHANNEL??'chrome',headless:true});});
 after(async()=>{await browser?.close();});
 test('opening login returns before an App exists and preserves manual login on repeated clicks',async()=>{
- const page=await browser.newPage();let navigations=0;
+ const page=await browser.newPage();let navigations=0,channelRequests=0;
  const fixture=createServer((req,res)=>{
   navigations++;
-  if(req.url.includes('/channels/')){res.writeHead(302,{Location:'/login'});res.end();return;}
+  if(req.url.includes('/channels/')){channelRequests++;res.end('<h1>Discord APP已开启</h1>');return;}
   res.setHeader('Content-Type','text/html; charset=utf-8');res.end('<h1>登录</h1><input aria-label="账号"><button>登录</button>');
  });
  await new Promise(resolve=>fixture.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+fixture.address().port;
@@ -23,6 +23,7 @@ test('opening login returns before an App exists and preserves manual login on r
  ui.ensureApp=async()=>{throw Error('Opening login must not launch the game');};
  try{
   await ui.openForLogin();await page.getByRole('heading',{name:'登录'}).waitFor();
+  assert.equal(channelRequests,0);assert.equal(new URL(page.url()).pathname,'/login');
   await page.getByRole('textbox',{name:'账号'}).fill('manual-login-in-progress');
   const before=navigations;await ui.openForLogin();
   assert.equal(navigations,before);assert.equal(await page.getByRole('textbox').inputValue(),'manual-login-in-progress');
@@ -30,7 +31,7 @@ test('opening login returns before an App exists and preserves manual login on r
  }finally{await page.close();await new Promise(resolve=>fixture.close(resolve));}
 });
 
-test('opening a channel never clicks its launcher; navigation errors remain retryable',async()=>{
+test('opening web login never clicks a launcher; navigation errors remain retryable',async()=>{
  const page=await browser.newPage();let unavailable=true;
  const fixture=createServer((req,res)=>{
   if(unavailable){req.socket.destroy();return;}
@@ -43,7 +44,27 @@ test('opening a channel never clicks its launcher; navigation errors remain retr
   await assert.rejects(ui.openForLogin(),/网络提示.*代理配置/u);
   await errorPage;
   unavailable=false;await ui.openForLogin();await page.getByRole('button',{name:'打开应用',exact:true}).waitFor();
-  assert.equal(page.url(),url);assert.equal(ui.needsNavigate,false);
+  assert.equal(page.url(),new URL('/login',url).href);assert.equal(ui.needsNavigate,false);
+ }finally{await page.close();await new Promise(resolve=>fixture.close(resolve));}
+});
+test('desktop-app handoff pauses immediately and the open button recovers to web login',async()=>{
+ const page=await browser.newPage();let channelRequests=0;
+ const fixture=createServer((req,res)=>{
+  res.setHeader('Content-Type','text/html; charset=utf-8');
+  if(req.url.startsWith('/channels/')){channelRequests++;res.end('<h1>Discord APP已开启</h1><p>您可关闭本浏览器页面。</p>');}
+  else res.end('<h1>登录</h1><input aria-label="账号">');
+ });
+ await new Promise(resolve=>fixture.listen(0,'127.0.0.1',resolve));
+ const channelUrl='http://127.0.0.1:'+fixture.address().port+'/channels/1/2';
+ const ui=new BattleUI(page,{channelUrl},{responseTimeoutSeconds:1},()=>{},new AbortController().signal);
+ try{
+  await page.goto(channelUrl);ui.needsNavigate=false;
+  await assert.rejects(ui.detectCharacter(),/尚未进入网页版/u);
+  await ui.openForLogin();await page.getByRole('heading',{name:'登录'}).waitFor();
+  assert.equal(channelRequests,1);assert.equal(new URL(page.url()).pathname,'/login');
+  await page.goto('about:blank');ui.needsNavigate=true;
+  await assert.rejects(ui.detectCharacter(),/登录 Discord/u);
+  assert.equal(channelRequests,1);assert.equal(new URL(page.url()).pathname,'/login');
  }finally{await page.close();await new Promise(resolve=>fixture.close(resolve));}
 });
 

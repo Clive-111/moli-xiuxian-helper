@@ -114,6 +114,7 @@ export class BattleUI {
     this.signal.throwIfAborted();
     if (this.page.isClosed()) throw new RetryError('战斗页面已关闭，重新建立本任务页面。');
     if (/\/(login|register)(?:[/?]|$)/u.test(this.page.url())) throw new PauseError('请在浏览器中登录 Discord。');
+    if (await this.isDesktopHandoff()) throw new PauseError('当前页面打开了 Discord 桌面客户端，尚未进入网页版。请点击「打开游戏 / 登录」，在独立浏览器中登录后再读取人物。');
     for (const frame of await this.page.locator('iframe[src*="hcaptcha"],iframe[src*="recaptcha"]').all()) {
       if (await frame.isVisible()) throw new PauseError('页面需要手动验证。');
     }
@@ -169,9 +170,11 @@ export class BattleUI {
     const atChannel = current.origin === channel.origin && current.pathname === channel.pathname;
     // Opening the login window must not wait for, or click, the App launcher.
     // Repeated clicks also leave an in-progress manual login untouched.
-    if (!atLogin && (!atChannel || this.needsNavigate)) {
+    if (!atLogin && (!atChannel || this.needsNavigate || await this.isDesktopHandoff())) {
       try {
-        await this.page.goto(this.config.channelUrl, {waitUntil:'commit',timeout:15000});
+        // A cold /channels link can hand off to the installed Discord client.
+        // The explicit web login entry keeps manual login in this browser.
+        await this.page.goto(new URL('/login',channel.origin).href, {waitUntil:'commit',timeout:15000});
       } catch (error) {
         this.signal.throwIfAborted();
         this.needsNavigate = true;
@@ -180,6 +183,9 @@ export class BattleUI {
     }
     this.needsNavigate = false;
   }
+  async isDesktopHandoff() {
+    return this.page.getByText(/^(?:Discord\s*APP\s*已(?:开启|打开)|Discord\s*App\s*Launched)[!！]?$/iu).first().isVisible().catch(() => false);
+  }
   async ensureApp() {
     await this.guard();
     let frame = await this.findFrame();
@@ -187,6 +193,10 @@ export class BattleUI {
     // A temporarily loading game frame is not a missing Discord App. Reopening
     // the launcher here would toggle its dialog while the activity reconnects.
     if (this.frame && !this.frame.isDetached()) return this.waitFor(() => this.findFrame(), '现有游戏界面恢复', 60000);
+    if (this.needsNavigate && !this.config.characterName) {
+      await this.openForLogin();
+      await this.guard();
+    }
     const wrongChannel = this.page.url().startsWith('https://discord.com/channels/')
       && new URL(this.page.url()).pathname !== new URL(this.config.channelUrl).pathname;
     if (this.needsNavigate || wrongChannel) {
