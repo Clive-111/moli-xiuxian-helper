@@ -1,0 +1,25 @@
+{
+  "name": "moli-xiuxian-helper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "茉莉修仙传本地战斗与物品管理助手",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --test --test-concurrency=2 test/*.test.js",
+    "package": "node scripts/package.mjs"
+  },
+  "dependencies": {
+    "acorn": "8.18.0",
+    "playwright": "1.63.0"
+  },
+  "license": "MIT",
+  "author": "Clive-111",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Clive-111/moli-xiuxian-helper.git"
+  }
+}

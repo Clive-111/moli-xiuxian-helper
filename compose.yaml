@@ -1,0 +1,38 @@
+name: moli-xiuxian-helper
+services:
+  battle:
+    build: .
+    image: moli-xiuxian-helper:local
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    shm_size: 1gb
+    ports:
+      - "127.0.0.1:${VNC_PORT:-7080}:6080"
+      - "127.0.0.1:${CONTROL_PORT:-7081}:${CONTROL_PORT:-7081}"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      CONTROL_PORT: ${CONTROL_PORT:-7081}
+      VNC_PORT: ${VNC_PORT:-7080}
+      CONTROL_DATA_DIR: /app/data/control
+      BROWSER_PROXY_SERVER: ${BROWSER_PROXY_SERVER:-}
+    volumes:
+      - browser-profile:/data/profile
+      - ./data/control:/app/data/control
+      - ./logs/docker:/app/logs
+    tmpfs:
+      - /app/.runtime:mode=1777,size=1m
+      - /tmp:mode=1777,size=512m
+    healthcheck:
+      test: ["CMD", "/app/docker/healthcheck.sh"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  browser-profile:

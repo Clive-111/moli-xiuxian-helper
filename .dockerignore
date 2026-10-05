@@ -1,0 +1,13 @@
+**
+!package.json
+!package-lock.json
+!config.example.json
+!src/
+!src/**
+!web/
+!web/**
+!test/
+!test/**
+!docker/
+!docker/**
+!Dockerfile

@@ -1,0 +1,15 @@
+node_modules/
+data/
+.browser-profile/
+.runtime/
+logs/
+work/
+outputs/
+config.json
+config.docker.json
+compose.override.yaml
+.env
+.env.*
+!.env.example
+*.tmp
+*.log

@@ -1,0 +1,22 @@
+{
+  "browserChannel": "chrome",
+  "browserProxyServer": null,
+  "profileDir": ".browser-profile",
+  "dataDir": "data/control",
+  "controlPort": 7081,
+  "responseTimeoutSeconds": 30,
+  "actionDelaySeconds": 2,
+  "retrySeconds": [
+    10,
+    30,
+    60
+  ],
+  "recoveryIntervalSeconds": 300,
+  "battle": {
+    "channelUrl": "https://discord.com/channels/1401373424265203762/1551859374333501572",
+    "appName": "霜月茉莉",
+    "pollIntervalSeconds": 1,
+    "healActionIntervalSeconds": 0.5,
+    "actionDelaySeconds": 0.3
+  }
+}
