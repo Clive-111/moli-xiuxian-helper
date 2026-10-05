@@ -2,7 +2,8 @@ const $ = id => document.getElementById(id);
 const phases = { closed:'游戏已关闭', closing:'正在关闭游戏', 'inventory-action':'物品操作与保存核对中', crafting:'炼制与存档核对中', stopped:'已停止', running:'战斗运行中', healing:'调息中', switching:'切换地点中', checking:'核对游戏状态', recovering:'恢复游戏界面', retrying:'等待重试', attention:'需要处理', stopping:'正在撤退并停止' };
 const types = { battle:'普通战斗', healing:'可调息', rest:'普通歇息', challenge:'独立挑战' };
 const availability = { visible:'当前可见', locked:'锁定', unverified:'尚未核实' };
-let snapshot, draft, revision, token, dirty = false, lastCommand, catalogKey;
+let snapshot, draft, draftBase, revision, token, dirty = false, lastCommand, catalogKey;
+const battleSettings=value=>JSON.stringify([value?.target,value?.healingTarget,value?.consumables]);
 const date = at => at ? new Date(at).toLocaleString('zh-CN', { hour12:false }) : '—';
 const text = (id, value) => { $(id).textContent = value; };
 function notice(message, ok = false) { text('notice', message); $('notice').classList.toggle('success', ok); $('notice').hidden = false; }
@@ -42,7 +43,7 @@ function items() {
   }));
   $('consumables-enabled').checked = draft.consumables.enabled;
 }
-function resetDraft() { draft = structuredClone(snapshot.settings); revision = snapshot.revision; dirty = false; text('dirty','已与生效设置同步'); $('dirty').classList.remove('changed'); regionOptions(); items(); }
+function resetDraft() { draft = structuredClone(snapshot.settings); draftBase=structuredClone(snapshot.settings);revision = snapshot.revision; dirty = false; text('dirty','已与生效设置同步'); $('dirty').classList.remove('changed'); regionOptions(); items(); }
 function catalogRows() {
   const term = $('catalog-search').value.trim(), type = $('catalog-type').value;
   $('catalog-rows').replaceChildren(...(snapshot.catalog?.nodes ?? []).filter(n => (!term || (n.regionName+n.name).includes(term)) && (!type || n.type === type)).map(n => {
@@ -80,6 +81,9 @@ function render(value) {
     return;
   }
   if (!draft || !dirty && revision !== value.revision) resetDraft();
+  else if(dirty&&revision!==value.revision&&battleSettings(draftBase)===battleSettings(value.settings)){
+    draft.saleTarget=structuredClone(value.settings.saleTarget);draftBase=structuredClone(value.settings);revision=value.revision;
+  }
   const key = `${value.catalog?.updatedAt}/${value.catalog?.checkedAt}`;
   if (key !== catalogKey) { catalogKey = key; regionOptions(); catalogRows(); }
   items();
@@ -112,7 +116,7 @@ function render(value) {
     const message = document.createElement('span'); message.className = 'log-message'; message.textContent = log.message; line.append(time,message); return line;
   }));
   if ($('follow-log').checked) logs.scrollTop = logs.scrollHeight;
-  if (value.lastCommand && lastCommand !== value.lastCommand.id) { lastCommand = value.lastCommand.id; if(!value.lastCommand.automatic)notice(value.lastCommand.ok ? value.lastCommand.deferred?'等待当前游戏操作完成后继续读取。':value.lastCommand.partial?'部分页面读取失败，已保留旧数据。':'操作已完成。' : value.lastCommand.error,value.lastCommand.ok&&!value.lastCommand.partial); if (value.lastCommand.ok && value.lastCommand.kind === 'settings') resetDraft(); }
+  if (value.lastCommand && lastCommand !== value.lastCommand.id) { lastCommand = value.lastCommand.id; if(!value.lastCommand.automatic)notice(value.lastCommand.ok ? value.lastCommand.deferred?'等待当前游戏操作完成后继续读取。':value.lastCommand.partial?'部分页面读取失败，已保留旧数据。':'操作已完成。' : value.lastCommand.error,value.lastCommand.ok&&!value.lastCommand.partial); if (value.lastCommand.ok && value.lastCommand.kind === 'settings'&&!value.lastCommand.saleTargetOnly) resetDraft(); }
   window.dispatchEvent(new CustomEvent('battle-state',{detail:value}));
 }
 function countdown() {

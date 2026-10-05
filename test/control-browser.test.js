@@ -61,8 +61,11 @@ test('Chinese panel retains draft while SSE updates; grouped selections and cont
     await page.locator('#battle-region').selectOption('南境');await page.locator('#battle-stage').selectOption('石阶');
     control.emit('change',{...state,updatedAt:Date.now()});await page.waitForTimeout(100);
     assert.equal(await page.locator('#battle-region').inputValue(),'南境');assert.equal(await page.locator('#dirty').textContent(),'有尚未应用的修改');
+    state={...state,revision:2,settings:{...state.settings,saleTarget:{regionName:'北境',locationName:'镇',shopName:'商会'}},lastCommand:{id:50,kind:'settings',ok:true,saleTargetOnly:true}};
+    control.emit('change',state);await page.waitForTimeout(100);
+    assert.equal(await page.locator('#battle-region').inputValue(),'南境');assert.equal(await page.locator('#dirty').textContent(),'有尚未应用的修改');
     await page.getByRole('button',{name:'保存并应用',exact:true}).click();await page.waitForTimeout(100);
-    assert.equal(commands[0].payload.settings.target.regionName,'南境');assert.equal(commands[0].payload.revision,1);
+    assert.equal(commands[0].payload.settings.target.regionName,'南境');assert.equal(commands[0].payload.revision,2);assert.deepEqual(commands[0].payload.settings.saleTarget,state.settings.saleTarget);
     await page.getByRole('button',{name:'撤退并停止'}).click();await page.waitForTimeout(100);assert.equal(commands[1].kind,'stop');
     assert.equal(await page.locator('#items input:checked').count(),2);
     const artifacts=process.env.CONTAINER_PROFILE_PATH ? path.join(os.tmpdir(),'control-test') : 'work';

@@ -5,12 +5,12 @@
   const button=(title,fn,cls='secondary')=>{const b=n('button',cls,title);b.type='button';b.onclick=fn;return b;};
   const id=i=>i.identity?'instance:'+i.identity:i.gameItemId?'stack:'+i.gameItemId:null;
   let state={},selected=new Set(),bulk=false,list={view:'inventory',items:[],all:[]},current=null,preview=null,pending=null,error='',dialogMode='',slot='',choice='',stamp='',shopChoice='';
-  let equipSubmission=null;
+  let equipSubmission=null,shopSave=null,shopSaveError='';
   const quantities=new Map();let quantityItem=null,quantityValue='',gesture=null,suppressClick=false,blockDoubleUntil=0,scrollFrame=0;
   const dialog=n('dialog','library-detail inventory-dialog');dialog.id='inventory-action-dialog';dialog.setAttribute('aria-labelledby','inventory-action-title');
   const header=n('header'),title=n('h2');title.id='inventory-action-title';header.append(title,button('✕',()=>dialog.close(),'quiet'));
   header.lastChild.setAttribute('aria-label','关闭物品操作');const body=n('div','inventory-action-body');dialog.append(header,body);document.body.append(dialog);
-  const blocked=()=>Boolean(state.busy||state.crafting?.activeId||state.inventoryActions?.activeId||pending);
+  const blocked=()=>Boolean(state.busy||state.crafting?.activeId||state.inventoryActions?.activeId||pending||shopSave);
   function art(i){return window.InventoryLibrary.picture(i);}
   function summary(i){const row=n('div','inventory-line');row.append(art(i));const desc=n('div');desc.append(n('strong','',i.name),n('small','muted',`${i.quality?'品质 '+i.quality+' · ':''}${i.identity?'编号 '+i.identity:'类型 '+(i.gameItemId??'待核实')}`));row.append(desc);return row;}
   async function request(kind,payload){
@@ -21,10 +21,10 @@
   }
   function saleSetupIssue(){
     const target=state.inventoryActions?.saleTarget,shops=state.catalog?.shops??[];
-    if(!target)return '尚未设置卖出地点。请在行囊顶部选择商店，并点击「保存卖出地点」。';
+    if(!target)return '尚未找到可自动选择的卖出地点。请在行囊顶部选择商店，选中后会自动保存。';
     const matches=shops.filter(s=>s.regionName===target.regionName&&s.locationName===target.locationName&&s.name===target.shopName);
     if(matches.length!==1)return '已保存的卖出地点无法在当前目录中唯一匹配。请刷新商会目录，重新选择并保存地点。';
-    if(shopChoice&&shopChoice!==matches[0].id)return '新选择的卖出地点尚未保存。请先点击「保存卖出地点」，再核对清单。';
+    if(shopSave||shopChoice&&shopChoice!==matches[0].id)return shopSave?'正在保存卖出地点，请稍候。':'卖出地点保存未完成，请重试保存或重新选择商店。';
     return '';
   }
   function previewSale(ids){
@@ -38,6 +38,21 @@
   }
   const shopTitle=s=>s?`${s.regionName} / ${s.locationName} / ${s.name??s.shopName}`:'尚未选择';
   function chosenShop(){const shops=state.catalog?.shops??[],target=state.inventoryActions?.saleTarget;return shops.find(s=>s.id===shopChoice)||shops.find(s=>s.regionName===target?.regionName&&s.locationName===target?.locationName&&s.name===target?.shopName);}
+  function settleShop(){
+    if(!shopSave)return;
+    const target=state.inventoryActions?.saleTarget,expected=shopSave.target,cmd=state.lastCommand;
+    if(target&&target.regionName===expected.regionName&&target.locationName===expected.locationName&&target.shopName===expected.shopName){shopSave=null;shopSaveError='';shopChoice='';}
+    else if(shopSave.job&&cmd?.id===shopSave.job){shopSave=null;shopSaveError=cmd.ok?'地点保存结果尚未同步，请重试。':cmd.error;}
+  }
+  async function saveShop(value){
+    if(shopSave)return;shopChoice=value;shopSaveError='';
+    const shop=state.catalog?.shops?.find(s=>s.id===value),target=state.inventoryActions?.saleTarget;
+    if(!shop||shop.regionName===target?.regionName&&shop.locationName===target?.locationName&&shop.name===target?.shopName){toolbar();records();return;}
+    const request={target:{regionName:shop.regionName,locationName:shop.locationName,shopName:shop.name}};shopSave=request;toolbar();records();
+    const result=await send('settings',{revision:state.revision,saleTarget:request.target});
+    if(shopSave===request){if(result){request.job=result.id;settleShop();}else{shopSave=null;shopSaveError='保存未完成，请重试；当前生效地点未改变。';}}
+    toolbar();records();detail();
+  }
   function shopStatus(s){
     if(state.state?.region===s.regionName&&state.state?.location===s.locationName){const entries=(state.state.localServices??[]).filter(e=>e.name===s.name);if(entries.length===1)return entries[0].enabled?'入口当前可用':'入口暂不可用';}
     const node=state.catalog?.nodes?.find(n=>n.id===s.locationId);
@@ -50,12 +65,12 @@
     const active=shops.find(s=>s.regionName===target?.regionName&&s.locationName===target?.locationName&&s.name===target?.shopName);
     const ordered=[...shops].sort((a,b)=>(state.catalog?.regions??[]).findIndex(r=>r.name===a.regionName)-(state.catalog?.regions??[]).findIndex(r=>r.name===b.regionName));
     options(select,[{value:'',label:shops.length?'选择卖出地点':'目录待刷新'},...ordered.map(s=>({value:s.id,label:shopTitle(s)+' · '+shopStatus(s)}))],shopChoice||active?.id||'');
-    select.onchange=()=>{shopChoice=select.value;toolbar();records();};label.append(select);store.append(label);
-    const save=button('保存卖出地点',()=>{const s=shops.find(s=>s.id===select.value);if(s)void send('settings',{revision:state.revision,saleTarget:{regionName:s.regionName,locationName:s.locationName,shopName:s.name}});});save.disabled=Boolean(state.busy||pending||!select.value||select.value===active?.id);store.append(save);
+    select.disabled=Boolean(state.busy||pending||shopSave||state.gameClosed);select.onchange=()=>void saveShop(select.value);label.append(select);store.append(label);
+    if(shopSaveError){const retry=button('重试保存地点',()=>void saveShop(shopChoice));retry.disabled=Boolean(state.busy||pending||shopSave);store.append(retry);}
     const refresh=button('刷新商会目录',()=>send('refresh',{shopsOnly:true}));refresh.disabled=Boolean(state.busy||pending);store.append(refresh);
     root.append(store);
     root.append(n('p','hint',`已收录 ${shops.length} 处 · 当前生效：${shopTitle(target)}`));
-    if(select.value&&select.value!==active?.id)root.append(n('p','hint','地点尚未保存；保存后用于下一批卖出。已暂停的批次可在下方明确选择改店后继续。'));
+    root.append(n('p',shopSaveError?'reason':'hint',shopSave?'正在自动保存卖出地点…':shopSaveError||'打开游戏时自动核对地点；手动选择后自动保存，用于下一批卖出。'));
     const chosen=chosenShop();if(chosen?.prerequisiteName)root.append(n('p','hint',`商会开放条件：${chosen.prerequisiteName}；地点可见不代表商会已开放。`));
     const row=n('div','inventory-selection');row.append(n('span','muted',`已选 ${selected.size} 项${selected.size?'（含筛选隐藏项）':''}`));
     row.append(button(bulk?'退出选择':'批量选择',()=>{bulk=!bulk;window.InventoryLibrary.render();}));
@@ -182,13 +197,13 @@
       if(o.inspection)box.append(n('p','hint',`售出流程已检查：${o.inspection.name} · ${date(o.inspection.checkedAt)}，检查未出售物品。`));
       if(o===active&&o.kind==='sell'){const inspect=button('检查售出流程（不卖出）',()=>send('inventory-review',{operationId:o.id,inspectSale:true}));inspect.disabled=Boolean(state.busy||o.pending||o.cancelRequested);box.append(inspect);}
       if(o===active&&changeShop)box.append(n('p','hint','继续时将前往：'+shopTitle(selectedShop)+'；只处理原清单中的剩余数量。'));
-      if(o===active)for(const [label,kind] of [['仅核对结果','review'],[changeShop?'改到所选商会并继续剩余':'继续剩余','continue'],['取消剩余','cancel']]){const b=button(label,()=>send('inventory-'+kind,{operationId:o.id,...(kind==='continue'&&changeShop?{shopId:selectedShop.id}:{})}));b.disabled=kind==='continue'?Boolean(state.busy||o.pending||o.cancelRequested):kind==='review'?Boolean(state.busy):false;box.append(b);}return box;};
+      if(o===active)for(const [label,kind] of [['仅核对结果','review'],[changeShop?'改到所选商会并继续剩余':'继续剩余','continue'],['取消剩余','cancel']]){const b=button(label,()=>send('inventory-'+kind,{operationId:o.id,...(kind==='continue'&&changeShop?{shopId:selectedShop.id}:{})}));b.disabled=kind==='continue'?Boolean(state.busy||shopSave||shopSaveError||o.pending||o.cancelRequested):kind==='review'?Boolean(state.busy):false;box.append(b);}return box;};
     if(active)root.append(record(active));for(const o of ops.filter(o=>o!==active))history.append(record(o));root.append(history);
   }
   window.InventoryActions={decorate,chooseSlot};
   window.addEventListener('recipe-detail',e=>{current=e.detail;detail();});
   window.addEventListener('battle-state',e=>{
-    state=e.detail;settle();const key=JSON.stringify([state.busy,state.inventoryActions,state.crafting?.activeId,state.catalog?.updatedAt,state.state?.localServices,state.state?.region,state.state?.location,state.revision,pending,error]);
+    state=e.detail;settle();settleShop();const key=JSON.stringify([state.busy,state.inventoryActions,state.crafting?.activeId,state.catalog?.updatedAt,state.state?.localServices,state.state?.region,state.state?.location,state.revision,pending,error,shopSave,shopSaveError]);
     if(key!==stamp){stamp=key;toolbar();detail();records();
       // SSE must not erase edited quantities, selected equipment or scroll.
       const values=new Map([...body.querySelectorAll('[data-line-id]')].map(i=>[i.dataset.lineId,i.value]));

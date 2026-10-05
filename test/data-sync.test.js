@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp} from 'node:fs/promises';
+import {mkdtemp,readFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {SetupControl} from '../src/setup-control.js';
@@ -17,8 +17,69 @@ async function syncHarness() {
  const c=new SetupControl({base:{enabled:false,channelUrl:'https://discord.test/channels/1/2',appName:'App',target:null,consumables:{enabled:false,itemNames:[]}},directory,runtime:{profilePath:directory},signal,log:()=>{},makeUI:async()=>ui,closeGamePage:async()=>{actions.push('close');},catalogLoader:async()=>structuredClone(catalog),knowledgeLoader:async()=>({knowledge,catalog}),libraryReader:()=>({async read(view){ui.beforeAction?.('查看'+view);actions.push(view);return {items:[{name:view==='inventory'?'测试材料':'测试配方',key:view,category:'材料',quantity:1}],equipment:[],updatedAt:Date.now()};}}),bestiaryReader:()=>({async read(){ui.beforeAction?.('读取图鉴');actions.push('bestiary');return {entries:[],resourceUrl:catalog.resourceUrl,updatedAt:Date.now()};}})});
  await c.initialize();
  async function bind(){await c.command('setup-detect').promise;const result=await c.command('setup-bind',{token:c.getSetup().candidate.token}).promise;assert.ok(result.ok,result.error);await c.tail;}
- return {c,ui,state,actions,bind};
+ return {c,ui,state,actions,catalog,bind};
 }
+
+function addSaleShops(h){
+ h.catalog.nodes.push({id:'port',name:'港口',regionName:'北境',regionId:'north',type:'rest'},{id:'village',name:'村庄',regionName:'北境',regionId:'north',type:'rest'});
+ h.catalog.shops=[{id:'port-shop',name:'港口商会',regionName:'北境',locationName:'港口',locationId:'port',prerequisiteId:'battle'},
+  {id:'village-shop',name:'村庄货摊',regionName:'北境',locationName:'村庄',locationId:'village',prerequisiteId:null}];
+ h.state.location='港口';h.state.localServices=[{name:'港口商会',enabled:true}];
+}
+test('binding automatically saves the unique local shop, preserves it on reopen and never travels or sells',async()=>{
+ const h=await syncHarness();try{
+  addSaleShops(h);await h.bind();const expected={regionName:'北境',locationName:'港口',shopName:'港口商会'};
+  assert.deepEqual(h.c.record.settings.saleTarget,expected);assert.deepEqual(h.actions,['catalog','inventory','crafting','bestiary']);assert.equal(h.c.record.desired,'stopped');
+  const saved=JSON.parse(await readFile(path.join(h.c.directory,'settings.json')));assert.deepEqual(saved.settings.saleTarget,expected);
+  await h.c.command('close-game').promise;h.state.location='村庄';h.state.localServices=[{name:'村庄货摊',enabled:true}];await h.c.command('open-game').promise;await h.c.tail;
+  assert.deepEqual(h.c.record.settings.saleTarget,expected);
+ }finally{h.c.close();}
+});
+test('fresh map verification can select a visible unconditional safe shop while combat remains untouched',async()=>{
+ const h=await syncHarness();try{
+  addSaleShops(h);h.state.location='石阶';h.state.mode='combat';h.state.localServices=[];await h.bind();
+  assert.equal(h.c.record.settings.saleTarget.shopName,'村庄货摊');assert.equal(h.state.mode,'combat');assert.deepEqual(h.actions,['catalog','inventory','crafting','bestiary']);assert.equal(h.c.record.settings.target,null);
+ }finally{h.c.close();}
+});
+test('automatic shop selection rejects unsafe states, duplicate entries, locked and conditional fallback shops',async()=>{
+ const h=await syncHarness();try{
+  await h.bind();addSaleShops(h);h.c.catalog=structuredClone(h.catalog);
+  for(const variant of ['wrong-character','dialog','blocked','closed','stop','pending','duplicate-entry','disabled','map']){
+   const state=structuredClone(h.state);if(variant==='wrong-character')state.character='其他修士';if(variant==='dialog')state.view.dialogs=['确认'];if(variant==='blocked')state.blocked=true;if(variant==='map')state.mode='map';
+   if(variant==='duplicate-entry')state.localServices.push({...state.localServices[0]});if(variant==='disabled')state.localServices[0].enabled=false;
+   h.c.record.gameClosed=variant==='closed';h.c.stopRequests=variant==='stop'?1:0;if(variant==='pending'){h.c.inventoryActions.data.activeId='test';h.c.inventoryActions.data.operations.test={id:'test'};}
+   await h.c.ensureSaleTarget(state,{allowFallback:true});assert.equal(h.c.record.settings.saleTarget,undefined,variant);
+   h.c.record.gameClosed=false;h.c.stopRequests=0;h.c.inventoryActions.data.activeId=null;
+  }
+  h.c.catalog.nodes.forEach(n=>n.availability='locked');h.state.location='石阶';h.state.localServices=[];
+  await h.c.ensureSaleTarget(h.state,{allowFallback:true});assert.equal(h.c.record.settings.saleTarget,undefined);
+  h.c.catalog.nodes.forEach(n=>n.availability='visible');h.c.catalog.shops.forEach(s=>s.prerequisiteId='battle');
+  await h.c.ensureSaleTarget(h.state,{allowFallback:true});assert.equal(h.c.record.settings.saleTarget,undefined);
+ }finally{h.c.close();}
+});
+test('failed automatic destination persistence keeps settings and runtime configuration unchanged',async()=>{
+ const h=await syncHarness();try{
+  await h.bind();addSaleShops(h);h.c.catalog=structuredClone(h.catalog);const before=structuredClone(h.c.record),write=h.c.write;
+  h.c.write=async()=>{throw Error('disk full');};await assert.rejects(h.c.ensureSaleTarget(h.state),/disk full/u);assert.deepEqual(h.c.record,before);assert.equal(h.c.config.saleTarget,undefined);
+  h.c.write=write;await h.c.ensureSaleTarget(h.state);assert.equal(h.c.record.settings.saleTarget.shopName,'港口商会');
+ }finally{h.c.close();}
+});
+test('saving battle settings retains a destination automatically prepared by the same map verification',async()=>{
+ const h=await syncHarness();try{
+  await h.bind();addSaleShops(h);h.c.catalog=structuredClone(h.catalog);
+  const result=await h.c.command('settings',{revision:h.c.record.revision,settings:{...h.c.record.settings,target:{regionName:'北境',stageName:'石阶'}}}).promise;
+  assert.ok(result.ok,result.error);assert.equal(h.c.record.settings.saleTarget.shopName,'港口商会');assert.equal(h.c.record.settings.target.stageName,'石阶');assert.equal(h.c.record.desired,'stopped');
+ }finally{h.c.close();}
+});
+test('bound startup refreshes automatically, but persisted closed state never opens the game',async()=>{
+ const h=await syncHarness();let restored;try{
+  addSaleShops(h);await h.bind();h.c.close();h.actions.length=0;
+  const options={base:h.c.base,directory:h.c.dataRoot,runtime:h.c.runtime,signal:h.c.signal,log:()=>{},makeUI:h.c.makeUI,closeGamePage:h.c.closeGamePage,catalogLoader:h.c.catalogLoader,knowledgeLoader:h.c.knowledgeLoader,libraryReader:h.c.libraryReader,bestiaryReader:h.c.bestiaryReader};
+  restored=new SetupControl(options);await restored.initialize();await restored.tail;assert.deepEqual(h.actions,['catalog','inventory','crafting','bestiary']);assert.equal(restored.record.desired,'stopped');
+  await restored.command('close-game').promise;restored.close();h.actions.length=0;restored=new SetupControl(options);await restored.initialize();await restored.tail;
+  assert.deepEqual(h.actions,['close']);assert.equal(restored.record.gameClosed,true);
+ }finally{restored?.close();h.c.close();}
+});
 
 test('confirmation loads all four data groups without selecting a target or starting consumption; reopening refreshes again',async()=>{
  const h=await syncHarness();try{

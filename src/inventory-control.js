@@ -40,6 +40,7 @@ export class InventoryControl {
     const a=await this.adapter();let lines,shop,comparison='';
     if(payload.kind==='sell'){
       if(!this.control.catalog?.shops?.length)await this.control.refreshCatalog();
+      await this.control.ensureSaleTarget(this.control.state);
       shop=saleShop(this.control.catalog,this.control.record.settings.saleTarget??DEFAULT_SALE_TARGET);
       const inventory=await a.inventory(undefined,false);
       // A sale preview reads the bag once without expanding the equipment rack.

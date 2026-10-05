@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { atomicJson, readJson } from './control-store.js';
 import { fetchCatalog, targetNode, saleShop } from './catalog.js';
+import {automaticSaleShop} from './sale-destination.js';
 import { BattleRunner, entryOutcome } from './battle.js';
 import { runBattleIteration } from './battle-view.js';
 import { ConsumableRunner, consumableStatePath } from './consumables.js';
@@ -125,6 +126,16 @@ export class BattleControl extends EventEmitter {
     if (this.consumables) this.consumables.config = this.config.consumables;
   }
   persist(record) { return this.write(path.join(this.directory, 'settings.json'), record); }
+  async ensureSaleTarget(state,{allowFallback=false}={}) {
+    if(this.record.settings.saleTarget||this.record.gameClosed||this.stopRequests||this.closeRequests||this.signal.aborted||this.inventoryActions.active||this.crafting.active)return;
+    if(!state||state.character!==this.config.characterName||state.blocked||state.view?.dialogs?.length||!['rest','ready','combat'].includes(state.mode))return;
+    if(['pendingEntry','pendingHealingTravel','pendingRetreat','healPending','pendingHealingStop'].some(key=>this.runner?.[key]))return;
+    const shop=automaticSaleShop(this.catalog,state,{allowFallback});if(!shop)return;
+    const saleTarget={regionName:shop.regionName,locationName:shop.locationName,shopName:shop.name};
+    const record={...this.record,revision:this.record.revision+1,settings:{...this.record.settings,saleTarget}};
+    await this.persist(record);this.record=record;this.config.saleTarget=saleTarget;
+    this.log(`已自动设置卖出地点：${shop.regionName} / ${shop.locationName} / ${shop.name}；出售前仍核对入口。`);
+  }
   automaticLibraryAllowed() { return !this.record.gameClosed&&this.record.desired==='running'&&!this.stopRequests; }
   statusReadAllowed() {
     return !this.signal.aborted && !this.record?.gameClosed && !this.closeRequests && !this.stopRequests
@@ -139,6 +150,7 @@ export class BattleControl extends EventEmitter {
       const ui=this.ui,state=await ui.observeExisting();
       if (ui!==this.ui || this.record.gameClosed || this.closeRequests || this.stopRequests || this.signal.aborted) return {skipped:'stopped'};
       this.state=state;this.updatedAt=this.now();this.statusError='';
+      await this.ensureSaleTarget(state);
     } catch (error) {
       this.statusError=error.message.split('\n')[0];
       if (error instanceof PauseError && this.record.desired==='running') {this.phase='attention';this.reason=this.statusError;}
@@ -196,6 +208,7 @@ export class BattleControl extends EventEmitter {
     const next = await this.ui.inspectCatalog(this.catalog);
     await this.write(path.join(this.directory, 'catalog.json'), next);
     this.catalog = next; this.catalogError = ''; this.publish();
+    await this.ensureSaleTarget(await this.ui.observe({allowObstructed:true}),{allowFallback:true});
     this.log(`地图核实完成：${next.nodes.filter(n => n.availability === 'visible').length} 个当前可见地点。`);
   }
   async verify(settings) {
@@ -343,7 +356,7 @@ export class BattleControl extends EventEmitter {
       const saleTarget={regionName:shop.regionName,locationName:shop.locationName,shopName:shop.name};
       const record={...this.record,revision:this.record.revision+1,settings:{...this.record.settings,saleTarget}};
       await this.persist(record);this.record=record;this.config.saleTarget=saleTarget;
-      this.log(`默认卖出地点已保存：${shop.regionName} / ${shop.locationName} / ${shop.name}；现有批次不自动改店或继续。`);return;
+      this.log(`默认卖出地点已保存：${shop.regionName} / ${shop.locationName} / ${shop.name}；现有批次不自动改店或继续。`);return {saleTargetOnly:true};
     }
     if(kind.startsWith('inventory-')){
       if(this.crafting.active)throw new Error('炼制结果仍待核对，暂不操作物品');
@@ -423,6 +436,7 @@ export class BattleControl extends EventEmitter {
       const checked = await this.ui.inspectCatalog(next);
       await this.write(path.join(this.directory, 'catalog.json'), checked);
       this.catalog = checked; this.catalogError = ''; this.publish();
+      await this.ensureSaleTarget(await this.ui.observe({allowObstructed:true}),{allowFallback:true});
       this.log(`目录刷新完成：${checked.regions.length} 个区域、${checked.nodes.length} 个地点、${checked.items.length} 种灵髓。`);
       if(this.knowledge&&this.bestiary&&(this.knowledge.resourceUrl!==checked.resourceUrl||this.bestiary.resourceUrl!==checked.resourceUrl||this.bestiary.knowledgeRevision!==this.knowledge.revision)){
         try{await this.readBestiary();}
@@ -437,6 +451,9 @@ export class BattleControl extends EventEmitter {
       this.reconcile(await this.ui.observe({ allowObstructed: true }));
       if (this.runner.pendingEntry || this.runner.pendingHealingTravel || this.runner.pendingRetreat) throw new Error('上一动作尚未确认，暂不应用设置；请先恢复任务');
       await this.verify(settings);
+      // Map verification may have prepared the first sale destination while
+      // this battle-settings request was already in flight.
+      if(!settings.saleTarget&&this.record.settings.saleTarget)settings.saleTarget=structuredClone(this.record.settings.saleTarget);
       const record = { ...this.record, revision: this.record.revision + 1, settings };
       await this.persist(record); // Active config changes only after the durable write.
       this.record = record; this.configure(settings); this.nextTick = 0;

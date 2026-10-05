@@ -113,7 +113,7 @@ test('confirmation rejects changed names, stale tokens and absent candidates wit
 test('binding restart preserves character, null target, intent and ownership; tampering blocks cache loading',async()=>{
  const h=await harness();await bind(h);
  await h.control.command('refresh').promise;
- const next=new SetupControl(h.params);await next.initialize();next.close();
+ const next=new SetupControl(h.params);next.syncAll=async()=>({});await next.initialize();await next.tail;next.close();
  assert.equal(next.isBound,true);assert.equal(next.record.desired,'stopped');assert.equal(next.record.settings.target,null);
  const identity=JSON.parse(await readFile(path.join(h.directory,'identity.json'),'utf8'));
  await atomicJson(path.join(h.directory,'identity.json'),{...identity,characterName:'另一个人'});

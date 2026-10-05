@@ -58,6 +58,7 @@ export class SetupControl extends BattleControl {
       return;
     }
     await this.initializeBound();
+    if(!this.record.gameClosed&&!this.inventoryActions.active&&!this.crafting.active)this.queueDataSync();
   }
   async initializeBound() {
     const b = this.binding;
