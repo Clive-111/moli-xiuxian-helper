@@ -125,6 +125,7 @@ test('fresh panel completes read and confirm, renders empty settings on desktop/
  const dir=await mkdtemp(path.join(os.tmpdir(),'moli-panel-'));
  const ui={config:{},async ensureApp(){},async detectCharacter(){return '新玩家🌙';}};
  const c=new SetupControl({base:{channelUrl:'https://discord.com/channels/1/2',appName:'App'},directory:dir,runtime:{profilePath:dir},makeUI:async()=>ui,log:()=>{},signal:new AbortController().signal});
+ c.syncAll=async()=>({}); // This fixture tests onboarding layout, not game lists.
  await c.initialize();const server=await startControlServer(c,{port:0}),page=await browser.newPage({viewport:{width:1360,height:1000}}),errors=[];
  page.on('pageerror',e=>errors.push(e.message));
  try{

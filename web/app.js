@@ -96,6 +96,9 @@ function render(value) {
   const reason=[...new Set([value.reason,value.statusError].filter(Boolean))].join(' ');
   text('reason',reason); $('reason').hidden = !reason;
   text('busy',value.closingGame ? '等待当前操作核对结束后断开…' : value.busy ? '正在处理操作…' : '');
+  const sync=value.dataSync,labels={catalog:'战斗与调息地点',inventory:'背包',crafting:'炼制配方',bestiary:'敌人图鉴',sync:'资料'};
+  const syncErrors=Object.entries(sync?.errors??{}).map(([key,error])=>`${labels[key]??key}：${error}`).join('；');
+  text('data-sync',!sync||sync.phase==='idle'?'打开游戏后自动读取地点、背包、配方和图鉴。':sync.phase==='queued'?'资料读取已排队…':sync.phase==='reading'?`正在读取${labels[sync.stage]??'资料'}（${sync.completed.length}/4）…`:sync.phase==='done'?'地点、背包、配方和图鉴已全部读取。':`资料读取${sync.phase==='paused'?'已暂停':'部分完成'}：${syncErrors}`);
   text('active-battle',value.settings.target ? `当前生效：${value.settings.target.regionName} / ${value.settings.target.stageName}` : '尚未选择战斗目标，请先刷新地点目录');
   text('active-healing',`当前生效：${value.settings.healingTarget ? value.settings.healingTarget.regionName+' / '+value.settings.healingTarget.locationName : '就地调息'}`);
   text('catalog-count',`${value.catalog?.regions.length ?? 0} 个区域 · ${value.catalog?.nodes.length ?? 0} 个地点`);

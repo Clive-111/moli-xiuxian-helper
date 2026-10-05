@@ -239,20 +239,21 @@ export class BattleUI {
     const profile = this.page.getByRole('dialog').filter({ has: this.page.getByRole('heading', { name: this.config.appName, exact: true }) });
     const start = profile.getByRole('button').filter({ hasText: /^(启动|加入|启动活动|开始活动|启动应用|加入活动|在频道中启动|Launch|Start|Join Activity|Launch Activity)$/iu });
     const visible = async locator => (await Promise.all((await locator.all()).map(item => item.isVisible()))).some(Boolean);
-    const launchAction = async (locator, label) => {
+    const launchAction = async (locator, label, progressed = async()=>false) => {
       await sleep(this.runtime.actionDelaySeconds * 1000, this.signal);
       await this.guard();
       if (await this.findFrame()) return; // Activity opened during the slow-click delay.
-      if (!await visible(locator)) throw new RetryError(`${label}界面发生变化，先重新读取 App 状态。`);
+      if (await progressed()) return;
+      if (!await visible(locator)) throw Object.assign(new RetryError(`${label}界面发生变化，先重新读取 App 状态。`),{launchStateChanged:true});
       const item = await this.unique(locator, label);
       if (!await item.isEnabled()) throw new RetryError(`${label}尚未就绪。`);
       this.beforeAction?.(label);
       await item.click({ timeout: this.runtime.responseTimeoutSeconds * 1000 });
     };
     await this.waitFor(async () => await this.findFrame() || await visible(app) || await visible(start) || await visible(appLauncher), 'App 启动器', 60000);
-    if (!await this.findFrame() && !await visible(app) && !await visible(start)) await launchAction(appLauncher, 'App 启动器');
+    if (!await this.findFrame() && !await visible(app) && !await visible(start)) await launchAction(appLauncher, 'App 启动器',async()=>await visible(app)||await visible(start));
     await this.waitFor(async () => await this.findFrame() || await visible(app) || await visible(start), '配置的 App');
-    if (!await this.findFrame() && !await visible(start)) await launchAction(app, this.config.appName);
+    if (!await this.findFrame() && !await visible(start)) await launchAction(app, this.config.appName,()=>visible(start));
     await this.waitFor(async () => await this.findFrame() || await visible(start), 'App 启动按钮或已运行界面');
     if (!await this.findFrame()) await launchAction(start, '启动活动');
     // Never click Leave or launch a private-message activity.

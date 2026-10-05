@@ -16,7 +16,7 @@ async function harness(options={}) {
  let name='青松Player🌙',reads=0,opens=0;
  const ui={config:{},async detectCharacter(){reads++;if(options.error)throw Error(options.error);return name;},async openForLogin(){opens++;},async ensureApp(){throw Error('首次打开不能等待游戏启动器');},async inspectCatalog(value){return value;},async observe(){return {character:name,mode:'rest',health:{current:'100',maximum:'100'},view:{dialogs:[],activeTab:'游历'},heal:{running:false}};}};
  const params={base:{...base,...options.base},directory,runtime:{profilePath:path.join(directory,'browser'),retrySeconds:[10],recoveryIntervalSeconds:300},signal:new AbortController().signal,log:()=>{},makeUI:async()=>ui,catalogLoader:async()=>structuredClone(catalog)};
- const control=new SetupControl(params);await control.initialize();
+ const control=new SetupControl(params);control.syncAll=async()=>({});await control.initialize(); // Full data synchronization has its own integration tests.
  return {control,directory,params,ui,setName:v=>{name=v;},get reads(){return reads;},get opens(){return opens;}};
 }
 async function bind(h) {

@@ -65,6 +65,7 @@ test('binding publishes location and health immediately, stopped polling reads o
  const h=await harness(),directory=await mkdtemp(path.join(os.tmpdir(),'moli-popout-'));let connections=0,reads=0;
  h.ui.config={...h.config,characterName:''};const observe=h.ui.observeExisting.bind(h.ui);h.ui.observeExisting=async()=>{reads++;return observe();};
  const c=new SetupControl({base:{...h.config,characterName:''},directory,runtime:{profilePath:path.join(directory,'browser')},signal:new AbortController().signal,log:()=>{},makeUI:async()=>{connections++;return h.ui;}});
+ c.syncAll=async()=>({}); // Keep this fixture focused on status-only polling.
  await c.initialize();const server=await startControlServer(c,{port:0});
  try{
   await popOut(h);

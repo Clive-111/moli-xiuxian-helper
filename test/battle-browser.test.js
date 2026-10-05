@@ -202,6 +202,27 @@ test('a known game iframe loading briefly is awaited without reopening the Disco
   } finally { await h.context.close(); }
 });
 
+test('App profile advancing during the click delay is reread without clicking the obsolete heading', async()=>{
+ const context=await browser.newContext();
+ try {
+  const page=await context.newPage();
+  await page.route('https://fixture.invalid/**',route=>route.fulfill({contentType:'text/html',body:fixture}));
+  await page.setContent('<div role="dialog" id="app"><h3>测试 App</h3></div>');
+  await page.evaluate(()=>{
+   window.actions=[];const app=document.querySelector('#app');
+   app.querySelector('h3').onclick=()=>actions.push('obsolete-heading');
+   setTimeout(()=>{
+    // The profile reuses the heading, but its Join control is now ready.
+    const button=document.createElement('button');button.textContent='加入';
+    button.onclick=()=>{actions.push('join');app.remove();const frame=document.createElement('iframe');frame.src='https://fixture.invalid/game';document.body.append(frame);};
+    app.append(button);
+   },200);
+  });
+  const ui=new BattleUI(page,config,{...runtime,actionDelaySeconds:.5},()=>{},new AbortController().signal);ui.needsNavigate=false;
+  assert.equal((await ui.observe()).character,'测试修士');assert.deepEqual(await page.evaluate(()=>actions),['join']);
+ } finally {await context.close();}
+});
+
 test('consume all is scoped to the two named player items despite nearby All buttons', async () => {
   const h=await setup();
   try {

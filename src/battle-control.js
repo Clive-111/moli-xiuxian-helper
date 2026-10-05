@@ -44,6 +44,7 @@ export class BattleControl extends EventEmitter {
     this.tail = Promise.resolve(); this.pending = new Map(); this.logs = []; this.sequence = 0;
     this.phase = 'stopped'; this.reason = ''; this.nextTick = 0; this.failures = 0; this.stopRequests = 0;
     this.closeRequests = 0;
+    this.dataSync = {phase:'idle',stage:'',completed:[],errors:{}};
     this.libraryReader=libraryReader;
     this.knowledgeLoader=knowledgeLoader;this.bestiaryReader=bestiaryReader;this.bestiaryError='';
     this.images=new LibraryImages(path.join(directory,'images'),runtime.browserProxyServer);
@@ -155,7 +156,7 @@ export class BattleControl extends EventEmitter {
   }
   snapshot() {
     return { phase: this.phase, desired: this.record?.desired, gameClosed: this.record?.gameClosed===true, closingGame: this.closeRequests>0, reason: this.reason, busy: this.activeCommand ?? null,
-      revision: this.record?.revision, settings: this.record?.settings, state: this.state, updatedAt: this.updatedAt ?? null,statusError:this.statusError ?? '',
+      revision: this.record?.revision, settings: this.record?.settings, state: this.state, updatedAt: this.updatedAt ?? null,statusError:this.statusError ?? '',dataSync:this.dataSync,
       catalog: this.catalog ?? null, catalogError: this.catalogError ?? '', logs: this.logs, lastCommand: this.lastCommand,
       library: {revision:this.library.revision,errors:this.libraryErrors,sync:{intervalMs:LIBRARY_INTERVAL_MS,nextAt:this.librarySyncAt??0,deferred:this.libraryDeferred?.views??[]},views:Object.fromEntries(Object.entries(this.library.views).map(([key,value])=>[key,{updatedAt:value.updatedAt,count:value.items.length}]))},
       bestiary:{revision:this.bestiary?.revision??0,updatedAt:this.bestiary?.updatedAt??null,error:this.bestiaryError,knowledgeRevision:this.knowledge?.revision??null},
@@ -169,7 +170,7 @@ export class BattleControl extends EventEmitter {
     this.ui = await this.makeUI(this.config, this.log, this.ui, reconnect);
     this.ui.getCatalog = () => this.catalog;
     this.ui.beforeAction = (label, {cleanup=false} = {}) => {
-      const completing=cleanup&&(['library','bestiary'].includes(this.activeCommand)||this.activeCommand?.startsWith('craft-')||this.activeCommand?.startsWith('inventory-'));
+      const completing=cleanup&&(['sync','library','bestiary'].includes(this.activeCommand)||this.activeCommand?.startsWith('craft-')||this.activeCommand?.startsWith('inventory-'));
       if (this.signal.aborted || this.stopRequests && this.activeCommand !== 'stop' && !completing) throw new ControlInterrupted('已收到停止请求，禁止继续发起游戏操作');
       this.log(`操作：${label}`);
     };
@@ -241,7 +242,7 @@ export class BattleControl extends EventEmitter {
   }
   command(kind, payload = {}, {continuation=false}={}) {
     if(this.closeRequests&&kind!=='close-game')throw new ControlInterrupted('正在关闭游戏，请等待关闭完成');
-    if (!['start', 'stop', 'resume', 'restart', 'open-game', 'close-game', 'status', 'settings', 'refresh', 'library','bestiary','craft-preview','craft-execute','craft-review','craft-confirm','craft-sync','craft-delete','inventory-preview','inventory-execute','inventory-equip','inventory-review','inventory-continue','inventory-cancel'].includes(kind)) throw new Error('未知控制命令');
+    if (!['start', 'stop', 'resume', 'restart', 'open-game', 'close-game', 'status', 'sync', 'settings', 'refresh', 'library','bestiary','craft-preview','craft-execute','craft-review','craft-confirm','craft-sync','craft-delete','inventory-preview','inventory-execute','inventory-equip','inventory-review','inventory-continue','inventory-cancel'].includes(kind)) throw new Error('未知控制命令');
     if(kind==='library'&&payload.views!=null){
       if(!Array.isArray(payload.views)||!payload.views.length||payload.views.length>LIBRARY_SYNC_VIEWS.length||new Set(payload.views).size!==payload.views.length||payload.views.some(v=>!LIBRARY_SYNC_VIEWS.includes(v))||payload.key||payload.view)throw new Error('批量查看页面无效');
       payload={...payload,views:LIBRARY_SYNC_VIEWS.filter(v=>payload.views.includes(v))};
@@ -273,6 +274,7 @@ export class BattleControl extends EventEmitter {
     const id = ++this.sequence;
     const job = { id, kind, promise: null, payload };
     this.pending.set(pendingKey, job);
+    if(kind==='sync')this.dataSync={phase:'queued',stage:'',completed:[],errors:{}};
     job.promise = this.serial(async () => {
       this.activeCommand = kind; this.publish();
       try {
@@ -285,6 +287,7 @@ export class BattleControl extends EventEmitter {
         this.log(`控制操作未完成：${this.lastCommand.error}`);
         if (['start', 'resume', 'restart', 'stop','open-game','close-game'].includes(kind)) { this.phase = this.record.gameClosed&&kind!=='close-game'?'closed':'attention'; this.reason = this.lastCommand.error; }
         if (kind === 'refresh') this.catalogError = this.lastCommand.error;
+        if (kind === 'sync') this.dataSync={...this.dataSync,phase:'paused',stage:'',errors:{...this.dataSync.errors,sync:this.lastCommand.error}};
         if (kind === 'library') {for(const view of payload.views??[payload.view]){if(view==='bestiary')this.bestiaryError=this.lastCommand.error;else this.libraryErrors[view]=this.lastCommand.error;}this.librarySyncAt=this.now()+LIBRARY_INTERVAL_MS;}
         if (kind === 'bestiary') this.bestiaryError=this.lastCommand.error;
       } finally {
@@ -310,7 +313,13 @@ export class BattleControl extends EventEmitter {
       await this.persist(record);this.record=record;
       this.phase='checking';this.reason='';this.publish();
       await this.connect(true);
-      this.reconcile(await this.ui.observe({allowObstructed:true}));
+      for(let attempt=0;;attempt++){
+        try {this.reconcile(await this.ui.observe({allowObstructed:true}));break;}
+        catch(error){
+          if(!error.launchStateChanged||attempt>=2||this.stopRequests||this.closeRequests||this.signal.aborted)throw error;
+          this.log('Discord 应用菜单已变化，重新确认当前启动状态。');
+        }
+      }
       this.phase=this.inventoryActions.active||this.crafting.active?'attention':'stopped';
       this.reason=this.phase==='attention'?'已打开游戏，原操作仍待核对，不会自动重做。':'';
       this.needsPreflight=true;
@@ -324,6 +333,7 @@ export class BattleControl extends EventEmitter {
       if(this.stopRequests)throw new ControlInterrupted('正在停止，请稍后读取状态');
       await this.connect();return this.readStatus();
     }
+    if(kind==='sync')return this.syncAll();
     // These two operations only edit panel settings / download public definitions.
     // They are safe while a batch is paused and never resume or alter its lines.
     if(kind==='refresh'&&payload.shopsOnly===true){await this.refreshCatalog();this.publish();return;}
@@ -471,6 +481,37 @@ export class BattleControl extends EventEmitter {
     const entries=Object.entries(details).sort((a,b)=>b[1].updatedAt-a[1].updatedAt).slice(0,200);
     const next={version:1,revision:this.library.revision+1,views:{...this.library.views,[kind]:view},details:Object.fromEntries(entries)};
     await this.write(path.join(this.directory,'library.json'),next);this.library=next;delete this.libraryErrors[kind];this.publish();return result;
+  }
+  async syncAll() {
+    const completed=[],errors={};
+    this.dataSync={phase:'reading',stage:'',completed,errors};this.publish();
+    try {
+      for(const stage of ['catalog',...LIBRARY_SYNC_VIEWS]) {
+        this.dataSync.stage=stage;this.publish();
+        try {
+          if(this.signal.aborted||this.stopRequests||this.closeRequests||this.record.gameClosed)throw new ControlInterrupted('已停止剩余资料读取');
+          if(this.crafting.active||this.inventoryActions.active)throw new PauseError('存在待核对的物品操作，请先处理后再刷新资料');
+          await this.connect();
+          const state=await this.ui.observe({allowObstructed:true});this.reconcile(state);
+          if(state.character!==this.config.characterName||state.blocked||state.view?.dialogs?.length)throw new PauseError('当前人物或游戏弹窗需要确认，资料读取已暂停');
+          if(this.runner.pendingEntry||this.runner.pendingHealingTravel||this.runner.pendingRetreat||this.runner.healPending||this.runner.pendingHealingStop)throw new PauseError('上一游戏动作仍在核实，请稍后刷新资料');
+          await this.execute(stage==='catalog'?'refresh':stage==='bestiary'?'bestiary':'library',{view:stage});
+          completed.push(stage);
+        } catch(error) {
+          errors[stage]=error.message.split('\n')[0];
+          if(stage==='catalog')this.catalogError=errors[stage];
+          else if(stage==='bestiary')this.bestiaryError=errors[stage];
+          else this.libraryErrors[stage]=errors[stage];
+          if(error instanceof PauseError||error instanceof ControlInterrupted||this.signal.aborted)throw error;
+        }
+        this.publish();
+      }
+      this.dataSync.phase=Object.keys(errors).length?'partial':'done';
+      this.dataSync.updatedAt=this.now();
+      this.librarySyncAt=this.now()+LIBRARY_INTERVAL_MS;
+      return {completed,errors,...(Object.keys(errors).length?{partial:true}:{})};
+    } catch(error) {this.dataSync.phase='paused';throw error;}
+    finally {this.dataSync.stage='';this.publish();}
   }
   async readLibraryBatch(payload){
     this.libraryDeferred=null;const errors={},completed=[];
