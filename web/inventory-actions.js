@@ -19,7 +19,23 @@
   function settle(){const cmd=state.lastCommand;if(pending?.job&&cmd?.id===pending.job){pending=null;if(!cmd.ok)error=cmd.error;else if(cmd.previewId){preview=state.inventoryActions?.previews.find(p=>p.id===cmd.previewId);dialogMode='confirm';}else if(cmd.operationId||cmd.already){dialogMode='submitted';if(equipSubmission)equipSubmission.already=Boolean(cmd.already);}}
     if(equipSubmission&&state.inventoryActions?.operations.some(o=>o.id===equipSubmission.requestId)){pending=null;dialogMode='submitted';}
   }
-  function previewSale(ids){equipSubmission=null;preview=null;dialogMode='loading';title.textContent='核对卖出清单';if(!dialog.open)dialog.showModal();void request('preview',{kind:'sell',ids});}
+  function saleSetupIssue(){
+    const target=state.inventoryActions?.saleTarget,shops=state.catalog?.shops??[];
+    if(!target)return '尚未设置卖出地点。请在行囊顶部选择商店，并点击「保存卖出地点」。';
+    const matches=shops.filter(s=>s.regionName===target.regionName&&s.locationName===target.locationName&&s.name===target.shopName);
+    if(matches.length!==1)return '已保存的卖出地点无法在当前目录中唯一匹配。请刷新商会目录，重新选择并保存地点。';
+    if(shopChoice&&shopChoice!==matches[0].id)return '新选择的卖出地点尚未保存。请先点击「保存卖出地点」，再核对清单。';
+    return '';
+  }
+  function previewSale(ids){
+    equipSubmission=null;preview=null;error=saleSetupIssue();dialogMode=error?'sale-setup':'loading';title.textContent=error?'设置卖出地点':'核对卖出清单';
+    if(!dialog.open)dialog.showModal();
+    if(error){renderDialog();return;}void request('preview',{kind:'sell',ids});
+  }
+  function focusSaleShop(){
+    dialog.close();if($('library-detail').open)$('library-detail').close();
+    const select=$('inventory-toolbar').querySelector('select[aria-label="卖出商店"]');select?.scrollIntoView({block:'center'});select?.focus({preventScroll:true});
+  }
   const shopTitle=s=>s?`${s.regionName} / ${s.locationName} / ${s.name??s.shopName}`:'尚未选择';
   function chosenShop(){const shops=state.catalog?.shops??[],target=state.inventoryActions?.saleTarget;return shops.find(s=>s.id===shopChoice)||shops.find(s=>s.regionName===target?.regionName&&s.locationName===target?.locationName&&s.name===target?.shopName);}
   function shopStatus(s){
@@ -111,7 +127,9 @@
   }
   function renderDialog(){
     if(!dialogMode)return;const scroll=dialog.scrollTop;body.replaceChildren();
-    if(dialogMode==='quantity'&&quantityItem){
+    if(dialogMode==='sale-setup'){
+      body.append(n('p','','尚未发起库存核对或卖出，已选物品和数量会保留。'),button('去选择卖出地点',focusSaleShop,'primary'));
+    }else if(dialogMode==='quantity'&&quantityItem){
       const item=quantityItem;body.append(summary(item));const label=n('label','quantity-picker','选中数量'),input=n('input');input.type='number';input.min=1;input.step=1;input.max=item.identity?1:item.quantity;input.value=quantityValue;input.disabled=Boolean(item.identity);input.setAttribute('aria-label','选中数量');input.oninput=()=>{quantityValue=input.value;};label.append(input);body.append(label);
       body.append(n('p','hint',item.identity?'独立装备或炼材按编号选择，固定 1 件。':'此处只设置本次选择，不会立即卖出；提交前仍会重新核对库存。'));
       const actions=n('div','controls');if(!item.identity)actions.append(button('使用全部库存',()=>{quantities.delete(id(item));dialog.close();paintSelection();}));
@@ -151,7 +169,7 @@
         if(operation.error)result.append(n('p','reason',operation.error));body.append(result);
       }else body.append(n('p','',equipSubmission?.already?'所选装备已经穿戴，无需再次替换。':'已提交。批次进度显示在行囊的操作记录中。'));
     }
-    else body.append(n('p','','正在重新读取游戏库存与条件，尚未执行卖出或换装。'));
+    else body.append(n('p','',error?'本次核对未完成，尚未执行卖出或换装。':'正在重新读取游戏库存与条件，尚未执行卖出或换装。'));
     if(pending)body.append(n('p','hint',equipSubmission?'正在排队替换装备…':'正在排队核对游戏…'));if(error)body.append(n('p','reason',error));dialog.scrollTop=scroll;
   }
   function records(){const root=$('inventory-status');root.replaceChildren();const ops=state.inventoryActions?.operations??[];if(!ops.length)return;

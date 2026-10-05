@@ -122,3 +122,39 @@ test('pending native group displays one per selected instance and preserves lega
   assert.doesNotMatch(await rows.nth(0).innerText(),/待核对/u);assert.match(await rows.nth(2).innerText(),/已确认 0 \/ 7 · 待核对 7/u);assert.equal(h.calls.length,0);assert.deepEqual(h.errors,[]);
  }finally{await h.close();}
 });
+
+test('missing sale destination guides to the shop picker without sending a command or losing quantities',async()=>{
+ const h=await setup();try{const p=h.page;h.state.inventoryActions.saleTarget=null;h.publish();
+  await p.getByRole('button',{name:'批量选择',exact:true}).click();await p.locator('.inventory-card').last().locator('.collection-item').dblclick();
+  await p.getByRole('spinbutton',{name:'选中数量',exact:true}).fill('7');await p.getByRole('button',{name:'保存数量',exact:true}).click();
+  await p.getByRole('button',{name:'卖出已选',exact:true}).click();
+  const dialog=p.locator('#inventory-action-dialog');assert.match(await dialog.innerText(),/尚未设置卖出地点/u);assert.doesNotMatch(await dialog.innerText(),/正在重新读取|正在排队/u);assert.equal(h.calls.length,0);
+  await p.getByRole('button',{name:'去选择卖出地点',exact:true}).click();const select=p.getByRole('combobox',{name:'卖出商店',exact:true});assert.equal(await select.evaluate(el=>el===document.activeElement),true);
+  assert.equal(await p.locator('.inventory-checkbox input:checked').count(),1);assert.match(await p.locator('.inventory-card').last().innerText(),/× 7/u);
+  await select.selectOption('shop');await p.getByRole('button',{name:'保存卖出地点',exact:true}).click();await p.waitForTimeout(60);assert.equal(h.calls.at(-1).kind,'settings');
+  h.state.inventoryActions.saleTarget={regionName:'北',locationName:'镇',shopName:'商店'};h.state.revision++;h.publish();await p.waitForTimeout(60);
+  await p.getByRole('button',{name:'卖出已选',exact:true}).click();await p.waitForTimeout(60);assert.deepEqual(h.calls.at(-1),{kind:'inventory-preview',payload:{kind:'sell',ids:['stack:ore']}});
+  const id='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';h.state.inventoryActions.previews=[{id,kind:'sell',lines:[{...h.items[2],id:'stack:ore',quantity:20}],shop:h.state.catalog.shops[0]}];h.state.lastCommand={id:h.calls.length,kind:'inventory-preview',ok:true,previewId:id};h.publish();
+  const amount=dialog.locator('[data-line-id]');await amount.waitFor();assert.equal(await amount.inputValue(),'7');assert.equal(h.calls.some(c=>c.kind==='inventory-execute'),false);assert.deepEqual(h.errors,[]);
+ }finally{await h.close();}
+});
+
+test('single-item missing shop closes both dialogs and ambiguous or unsaved shops never request a preview',async()=>{
+ const h=await setup();try{const p=h.page;h.state.inventoryActions.saleTarget=null;h.publish();
+  await p.getByRole('button',{name:'查看矿石详情',exact:true}).click();await p.getByRole('button',{name:'卖出',exact:true}).click();await p.getByRole('button',{name:'去选择卖出地点',exact:true}).click();
+  assert.equal(await p.locator('dialog[open]').count(),0);assert.deepEqual(h.calls.map(c=>c.kind),['library']);
+  h.state.inventoryActions.saleTarget={regionName:'北',locationName:'镇',shopName:'商店'};h.state.catalog.shops.push({...h.state.catalog.shops[0],id:'duplicate'});h.publish();
+  await p.getByRole('button',{name:'批量选择',exact:true}).click();await p.getByRole('button',{name:'全选当前筛选',exact:true}).click();await p.getByRole('button',{name:'卖出已选',exact:true}).click();
+  assert.match(await p.locator('#inventory-action-dialog').innerText(),/无法在当前目录中唯一匹配/u);await p.getByRole('button',{name:'去选择卖出地点',exact:true}).click();
+  h.state.catalog.shops[1]={id:'other',name:'其他商会',regionName:'南',locationName:'港'};h.state.catalog.updatedAt=Date.now();h.publish();
+  const select=p.getByRole('combobox',{name:'卖出商店',exact:true});await select.selectOption('other');await p.getByRole('button',{name:'卖出已选',exact:true}).click();
+  assert.match(await p.locator('#inventory-action-dialog').innerText(),/新选择的卖出地点尚未保存/u);assert.deepEqual(h.calls.map(c=>c.kind),['library']);assert.deepEqual(h.errors,[]);
+ }finally{await h.close();}
+});
+
+test('failed preview stops showing ongoing inventory reads',async()=>{
+ const h=await setup();try{const p=h.page;await p.getByRole('button',{name:'批量选择',exact:true}).click();await p.getByRole('button',{name:'全选当前筛选',exact:true}).click();await p.getByRole('button',{name:'卖出已选',exact:true}).click();await p.waitForTimeout(60);
+  h.state.lastCommand={id:h.calls.length,kind:'inventory-preview',ok:false,error:'游戏等待确认'};h.publish();const dialog=p.locator('#inventory-action-dialog');await dialog.getByText('游戏等待确认',{exact:true}).waitFor();
+  assert.match(await dialog.innerText(),/本次核对未完成/u);assert.doesNotMatch(await dialog.innerText(),/正在重新读取|正在排队/u);assert.equal(h.calls.filter(c=>c.kind==='inventory-preview').length,1);assert.equal(h.calls.some(c=>c.kind==='inventory-execute'),false);assert.deepEqual(h.errors,[]);
+ }finally{await h.close();}
+});
