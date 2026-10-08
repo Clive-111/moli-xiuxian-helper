@@ -8,6 +8,15 @@
     l.guaranteed?`必得 ${fmt(l.guaranteed)} 件`:'',
     l.extraChance?`${fmt(l.extraChance*100)}% ${l.guaranteed?'额外':''}掉落 1 件`:'',
   ].filter(Boolean).join('，')+` · ${l.rolls} 次判定${l.ignoreLuck?' · 不受倍率影响':''}`;
+  function itemIcon(item){
+    const icon=el('span','material-icon','—');icon.setAttribute('aria-hidden','true');icon.title='暂无图片';
+    if(/^\/api\/library\/images\/[a-f0-9]{64}$/u.test(item.image??'')){
+      const image=el('img');image.alt='';image.loading='lazy';image.decoding='async';image.src=item.image;
+      image.onerror=()=>{icon.replaceChildren(document.createTextNode('—'));icon.title='图片暂不可用';};
+      icon.replaceChildren(image);icon.title='';
+    }
+    return icon;
+  }
   function mapCard(map,output,reference){
     const card=el('article','material-map'+(reference?' reference':''));card.dataset.mapId=map.id;
     const head=el('div','material-map-head');head.append(el('strong','',`${map.regionName||'区域待核实'} / ${map.name}`),el('span','material-yield',`${fmt(output.expected)} 件 / 轮`));card.append(head);
@@ -40,7 +49,8 @@
     for(const warning of data.warnings)results.append(el('p','reason',warning));
     for(const item of rows){
       const row=el('details','material-rank-row');row.dataset.id=item.id;row.open=opened.has(item.id);
-      const summary=el('summary'),name=el('div','material-name');name.append(el('span','tag',item.kind==='part'?'炼材':'材料'),el('strong','',item.name));
+      const summary=el('summary'),name=el('div','material-name'),label=el('div','material-name-text');
+      label.append(el('strong','',item.name),el('span','tag',item.kind==='part'?'炼材':'材料'));name.append(itemIcon(item),label);
       const location=el('div','material-location');location.append(el('span','',item.best?`${item.best.regionName} / ${item.best.name}`:item.reason),el('small','muted',item.best?(item.ties>1?`并列最高 ${item.ties} 张地图 · 展开对比`:'展开查看地图排行与掉落依据'):'展开查看来源说明'));
       const amount=el('div','material-amount');amount.append(el('strong','',item.best?fmt(item.best.expected):'—'),el('small','muted','件 / 轮'));
       summary.append(name,location,amount);row.append(summary,el('div','material-item-maps'));row.ontoggle=()=>{if(row.open)details(row,item);};
@@ -66,7 +76,7 @@
   window.addEventListener('battle-state',event=>{
     const previous=state;state=event.detail;
     $('material-farming-sync').disabled=Boolean(state.gameClosed||state.closingGame||state.busy||state.inventoryActions?.activeId||state.crafting?.activeId);
-    const next=JSON.stringify([state.bestiary?.revision,state.bestiary?.knowledgeRevision,state.catalog?.resourceUrl,state.catalog?.updatedAt,state.catalog?.checkedAt]);
+    const next=JSON.stringify([state.bestiary?.revision,state.bestiary?.knowledgeRevision,state.catalog?.resourceUrl,state.catalog?.updatedAt,state.catalog?.checkedAt,state.library?.revision]);
     if(next!==key){key=next;if(dialog.open)void calculate();}
     if(dialog.open&&state.lastCommand?.id!==previous.lastCommand?.id&&state.lastCommand?.kind==='bestiary'&&!state.lastCommand.ok)text('material-farming-message','资料同步未完成：'+state.lastCommand.error);
   });

@@ -6,11 +6,15 @@ import {materialFarming,bestiaryView} from '../src/farming.js';
 import {startControlServer} from '../src/control-server.js';
 import {materialFixture} from './helpers/material-fixture.js';
 let browser;before(async()=>{browser=await chromium.launch({channel:process.env.TEST_BROWSER_CHANNEL??'chrome',headless:true});});after(async()=>browser?.close());
+const image=letter=>'/api/library/images/'+letter.repeat(64);
+const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jvS8AAAAASUVORK5CYII=','base64');
 async function fixture(){
   const c=Object.assign(new EventEmitter(),materialFixture()),commands=[],errors=[];
   const state={phase:'closed',desired:'stopped',gameClosed:true,revision:1,settings:{target:{regionName:'北境',stageName:'同名山谷'},healingTarget:null,consumables:{enabled:false,itemNames:['赤灵髓']}},catalog:c.catalog,logs:[],consumables:{nextAt:12345},library:{revision:1,sync:{intervalMs:60000}},bestiary:{revision:1,updatedAt:1},crafting:{operations:[],previews:[]}};
   c.snapshot=()=>state;c.planMaterials=p=>materialFarming(c,p);c.getBestiary=()=>bestiaryView(c.knowledge,c.bestiary,c.catalog);
-  c.command=(kind,payload)=>{commands.push({kind,payload});return {id:commands.length,kind};};c.library={revision:1,views:{},details:{}};
+  c.command=(kind,payload)=>{commands.push({kind,payload});return {id:commands.length,kind};};
+  c.library={revision:1,views:{inventory:{items:[{gameItemId:'red',image:image('a')}]},crafting:{items:[{recipeId:'crafted',image:image('b')},{gameItemId:'green',image:image('c')}]}},details:{}};
+  c.images={get:async id=>{if(id==='c'.repeat(64))throw Error('image unavailable');return png;},close:async()=>{}};
   const server=await startControlServer(c,{port:0}),page=await browser.newPage({viewport:{width:1440,height:1000}});page.on('pageerror',e=>errors.push(e.message));
   await page.goto(`http://127.0.0.1:${server.server.address().port}/#library`);await page.locator('#material-farming-open').waitFor();
   return {c,state,page,commands,errors,close:async()=>{await page.close();await server.close();}};
@@ -28,6 +32,24 @@ test('all materials have individual best maps; closed game allows cached browsin
     await h.page.getByLabel('仅看可推荐').check();assert.equal(await h.page.locator('.material-rank-row').count(),1);
     await h.page.clock.install();await h.page.clock.fastForward(121000);assert.deepEqual(h.commands,[]);assert.deepEqual(h.state,original);
     await h.page.keyboard.press('Escape');assert.equal(await h.page.locator('#material-farming').evaluate(d=>d.open),false);assert.equal(await h.page.locator('#material-farming-open').evaluate(e=>e===document.activeElement),true);assert.deepEqual(h.errors,[]);
+  }finally{await h.close();}
+});
+
+test('cached icons load, failures fall back, and inventory refresh adds images without resetting the list',async()=>{
+  const h=await fixture();try{
+    await h.page.locator('#material-farming-open').click();await h.page.locator('.material-rank-row').first().waitFor();
+    const red=h.page.locator('.material-rank-row[data-id=red]'),crafted=h.page.locator('.material-rank-row[data-id=crafted]'),green=h.page.locator('.material-rank-row[data-id=green]');
+    await h.page.waitForFunction(()=>document.querySelector('.material-rank-row[data-id=red] img')?.naturalWidth>0);
+    await crafted.scrollIntoViewIfNeeded();await h.page.waitForFunction(()=>document.querySelector('.material-rank-row[data-id=crafted] img')?.naturalWidth>0);
+    assert.equal(await red.locator('img').getAttribute('src'),image('a'));assert.equal(await crafted.locator('img').getAttribute('src'),image('b'));
+    await green.scrollIntoViewIfNeeded();await h.page.waitForFunction(()=>document.querySelector('.material-rank-row[data-id=green] .material-icon')?.title==='图片暂不可用');
+    assert.equal(await green.locator('img').count(),0);
+    await h.page.getByLabel('搜索炼材或材料').fill('未知');
+    const hidden=h.page.locator('.material-rank-row[data-id=hidden]');await hidden.locator('summary').click();assert.equal(await hidden.locator('img').count(),0);
+    h.c.library.views.inventory.items.push({gameItemId:'hidden',image:image('d')});h.state.library.revision++;h.c.emit('change',h.state);
+    await h.page.waitForFunction(()=>document.querySelector('.material-rank-row[data-id=hidden] img')?.naturalWidth>0);
+    assert.equal(await hidden.getAttribute('open'),'');assert.equal(await h.page.getByLabel('搜索炼材或材料').inputValue(),'未知');
+    assert.deepEqual(h.commands,[]);assert.deepEqual(h.errors,[]);
   }finally{await h.close();}
 });
 

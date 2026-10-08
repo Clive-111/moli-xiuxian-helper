@@ -25,6 +25,23 @@ test('no direct drop, crafted materials and unencountered sources are distinct, 
   for(const id of ['crafted','hidden','other'])assert.equal(p.items.find(i=>i.id===id).best,null);
 });
 
+test('material icons reuse inventory and recipe images by ID before unique-name fallback',()=>{
+  const c=materialFixture(),image=letter=>'/api/library/images/'+letter.repeat(64);
+  c.library={views:{inventory:{items:[{name:'赤精料',image:image('a')},{gameItemId:'green',image:image('b')}]},crafting:{items:[{gameItemId:'red',image:image('c')},{gameItemId:'green',image:image('d')},{recipeId:'crafted',image:image('e')}]}},details:{ore:{name:'矿石',image:image('f')}}};
+  const before=structuredClone(c),p=materialFarming(c),icons=Object.fromEntries(p.items.map(i=>[i.id,i.image]));
+  assert.deepEqual(icons,{red:image('c'),green:image('b'),crafted:image('e'),hidden:null,other:image('f')});
+  assert.deepEqual(c,before);
+});
+
+test('namesakes, obsolete IDs and unregistered image URLs do not supply material icons',()=>{
+  const c=materialFixture(),image='/api/library/images/'+'a'.repeat(64);
+  c.knowledge.items.push({id:'namesake',name:'赤精料',kind:'part'});
+  c.library={views:{inventory:{items:[{name:'赤精料',image},{name:'碧矿',gameItemId:'gone',image},{name:'合炼料',recipeId:'gone',image},{gameItemId:'hidden',image:'https://other.test/image.png'},{gameItemId:'other',image:'/api/library/images/../private'}]}}};
+  assert.ok(materialFarming(c).items.every(i=>i.image===null));
+  c.library.views.inventory.items.push({gameItemId:'red',image});
+  const p=materialFarming(c);assert.equal(p.items.find(i=>i.id==='red').image,image);assert.equal(p.items.find(i=>i.id==='namesake').image,null);
+});
+
 test('locked, unverified, challenge, unknown-enemy and mismatched-version maps cannot win',()=>{
   const c=materialFixture(),p=materialFarming(c);
   assert.ok(p.maps.filter(m=>['locked','challenge'].includes(m.id)).every(m=>!m.eligible));

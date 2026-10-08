@@ -124,10 +124,27 @@ export function marrowFarming({knowledge,bestiary,catalog},payload={}){
     note:'按完整通关一轮计算，沿用炼制原料刷取的遭遇池、波数、掉落判定及地图倍率；不含个人气运，不是每分钟收益，也不保证当前角色能通关。多种灵髓合计按件数等权相加。'};
 }
 
-export function materialFarming({knowledge,bestiary,catalog},payload={}){
+function materialImages(knowledge,library){
+  const byId=new Map(knowledge.items.map(item=>[item.id,item])),byName=new Map(),images=new Map();
+  for(const item of knowledge.items){const ids=byName.get(item.name)??[];ids.push(item.id);byName.set(item.name,ids);}
+  const recipes=new Map(knowledge.recipes.map(recipe=>[recipe.id,recipe.output]));
+  const rows=[...(library?.views?.inventory?.items??[]),...(library?.views?.crafting?.items??[]),...Object.values(library?.details??{})]
+    .filter(row=>/^\/api\/library\/images\/[a-f0-9]{64}$/u.test(row.image??''));
+  // An exact item/recipe ID takes precedence over older name-only caches.
+  // Reuse observed image routes; never guess asset URLs or merge namesakes.
+  for(const row of rows){const id=row.gameItemId??recipes.get(row.recipeId);if(byId.has(id)&&!images.has(id))images.set(id,row.image);}
+  for(const row of rows){
+    if(row.gameItemId||row.recipeId)continue;
+    const ids=byName.get(row.name);if(ids?.length===1&&!images.has(ids[0]))images.set(ids[0],row.image);
+  }
+  return images;
+}
+
+export function materialFarming({knowledge,bestiary,catalog,library},payload={}){
   if(!knowledge)throw new Error('请先同步图鉴与地图，建立炼材掉落数据');
   if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).length)throw new Error('炼材排行不需要选择物品，搜索和筛选在面板完成');
-  const selected=knowledge.items.filter(i=>['part','material'].includes(i.kind)).map(({id,name,kind})=>({id,name,kind}));
+  const images=materialImages(knowledge,library);
+  const selected=knowledge.items.filter(i=>['part','material'].includes(i.kind)).map(({id,name,kind})=>({id,name,kind,image:images.get(id)??null}));
   const stale=bestiary?.knowledgeRevision!==knowledge.revision||bestiary?.resourceUrl!==knowledge.resourceUrl||catalog?.resourceUrl!==knowledge.resourceUrl;
   const warnings=[];
   if(!bestiary?.updatedAt)warnings.push('尚未读取已遭遇敌人，请同步图鉴与地图。');
