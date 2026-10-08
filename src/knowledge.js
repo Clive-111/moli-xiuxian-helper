@@ -73,6 +73,14 @@ export function parseKnowledge(source, resourceUrl='') {
       }
       if(n.callee.type==='MemberExpression'&&!n.callee.computed){
         const method=n.callee.property.name;
+        if(n.callee.object.type==='Identifier'&&n.callee.object.name==='Array'&&method==='from'){
+          // Project finite repeated rows, including separate rolls of the same
+          // drop. Never invoke a downloaded callback or an arbitrary iterator.
+          if(declarations.has('Array')||env.has('Array')||n.arguments.length!==2||n.arguments[1]?.type!=='ArrowFunctionExpression')throw new Error('不支持的重复数据构造式');
+          const shape=read(n.arguments[0],env);
+          if(!shape||typeof shape!=='object'||Array.isArray(shape)||Object.keys(shape).length!==1||!Object.hasOwn(shape,'length')||!Number.isSafeInteger(shape.length)||shape.length<0||shape.length>3000)throw new Error('重复数据表长度无效');
+          return Array.from({length:shape.length},(_,i)=>arrow(n.arguments[1],[undefined,i],env));
+        }
         if(n.callee.object.name==='Object'&&['freeze','fromEntries'].includes(method)){const value=read(n.arguments[0],env);return method==='freeze'?value:Object.fromEntries(value);}
         if(['map','flatMap'].includes(method)){const list=read(n.callee.object,env);if(!Array.isArray(list)||list.length>3000)throw new Error('数据表过大');const results=list.map((v,i)=>arrow(n.arguments[0],[v,i],env));return method==='flatMap'?results.flat():results;}
       }

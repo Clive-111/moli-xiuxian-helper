@@ -35,6 +35,42 @@ test('unknown or side-effectful data constructors are rejected, rather than eval
   assert.equal(globalThis.DO_NOT_EXECUTE,undefined);
 });
 
+test('repeated loot tables preserve every independent roll and map yield',()=>{
+  const updated=source.replace("loot:[loot('ore',.2)]","loot:[loot('wood',.1),...Array.from({length:4},()=>loot('ore',.4))]");
+  const knowledge=parseKnowledge(updated,'resource'),enemy=knowledge.enemies[0];
+  assert.deepEqual(enemy.loot.map(row=>[row.itemId,row.chance]),[['wood',.1],...Array(4).fill(['ore',.4])]);
+  const ore=groupLoot(enemy.loot,knowledge.items).find(row=>row.itemId==='ore');
+  assert.equal(ore.rolls,4);assert.equal(ore.expected,1.6);assert.ok(Math.abs(ore.atLeastOne-.8704)<1e-10);
+  const bestiary={knowledgeRevision:knowledge.revision,resourceUrl:'resource',entries:[{id:'rat'}]};
+  const catalog={resourceUrl:'resource',nodes:[{id:'hill',availability:'visible'}]};
+  const [map]=recommendMaps(knowledge,bestiary,catalog,[{itemId:'ore',quantity:4}]);
+  assert.ok(Math.abs(map.outputs[0].expected-3.2)<1e-10);assert.equal(globalThis.DO_NOT_EXECUTE,undefined);
+});
+
+test('repeated table callbacks bind local counts, undefined values and indices',()=>{
+  const updated=source.replace("loot:[loot('ore',.2)]","loot:repeated('ore')")+`
+    const repeated=(itemId,count=3)=>Array.from({length:count},(value,index)=>({itemId,chance:(index+1)/10,ignoreLuck:!value}));
+  `;
+  const loot=parseKnowledge(updated).enemies[0].loot;
+  assert.deepEqual(loot.map(row=>row.chance),[.1,.2,.3]);assert.ok(loot.every(row=>row.itemId==='ore'&&row.ignoreLuck===true));
+  for(const count of [0,3000])assert.equal(parseKnowledge(updated.replace("repeated('ore')",`repeated('ore',${count})`)).enemies[0].loot.length,count);
+});
+
+test('invalid, unbounded and non-length-only repeat tables fail closed',()=>{
+  for(const shape of ['{length:-1}','{length:1.5}','{length:3001}','{length:1/0}','{length:"4"}','{length:unknownLength()}','{length:1,0:"ore"}','[]','null']){
+    assert.throws(()=>parseKnowledge(source.replace("loot('ore',.2)",`...Array.from(${shape},()=>loot('ore',.4))`)),/重复数据|不完整|静态/u,shape);
+  }
+});
+
+test('repeat tables reject unknown callbacks, extra arguments and shadowed Array',()=>{
+  for(const expression of ['Array.from({length:4},unknownCallback)','Array.from({length:4},()=>fetch("http://invalid"))','Array.from({length:0},()=>loot("ore",.4),{})']){
+    assert.throws(()=>parseKnowledge(source.replace("loot('ore',.2)",`...${expression}`)),/重复数据|不完整|静态/u,expression);
+  }
+  const repeated=source.replace("loot('ore',.2)","...Array.from({length:4},()=>loot('ore',.4))");
+  assert.throws(()=>parseKnowledge(repeated+'const Array={from:()=>[]};'),/重复数据|不完整/u);
+  assert.equal(globalThis.DO_NOT_EXECUTE,undefined);
+});
+
 test('knowledge preserves the game marrow potency for catalog-consistent chooser order',()=>{
   const k=parseKnowledge(source.replace("ore:material('矿')","high:{name:'高灵髓',kind:'marrow',marrowValue:1e5},low:{name:'低灵髓',kind:'marrow',marrowValue:2},ore:material('矿')"));
   assert.equal(k.items.find(i=>i.id==='high').marrowValue,100000);
